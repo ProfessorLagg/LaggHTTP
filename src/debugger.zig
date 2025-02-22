@@ -20,10 +20,10 @@ pub fn main() !void {
 }
 
 fn debug_httpRequest() !void {
-    // var gpa_alloc = std.heap.GeneralPurposeAllocator(.{}){};
-    // defer std.debug.assert(gpa_alloc.deinit() == .ok);
-    // const allocator = gpa_alloc.allocator();
-    const allocator = std.heap.page_allocator;
+    var gpa_alloc = std.heap.GeneralPurposeAllocator(.{}){};
+    defer std.debug.assert(gpa_alloc.deinit() == .ok);
+    const allocator = gpa_alloc.allocator();
+    // const allocator = std.heap.page_allocator;
 
     const addr: std.net.Address = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 8080);
     var server: std.net.Server = try addr.listen(.{});
@@ -47,10 +47,10 @@ fn debug_httpRequest() !void {
             continue;
         };
         const msg = read_buf[0..msg_len];
-        std.log.info("Recieved message: \"{}\"", .{std.zig.fmtEscapes(msg)});
+        std.log.debug("Recieved message: \"{}\"", .{std.zig.fmtEscapes(msg)});
         var request: LaggHTTP.HttpRequest = try LaggHTTP.HttpRequest.init(allocator, msg);
         defer request.deinit();
-        std.log.info("HttpRequest: \"{}\"", .{request});
+        std.log.info("HttpRequest:\n{}", .{request});
 
         // try std.fmt.format(client_writer, "HTTP/1.1 200 OK\r\n\r\n{}",.{std.zig.fmtEscapes(msg)});
         try std.fmt.format(client_writer, "HTTP/1.1 200 OK\r\n\r\n", .{});

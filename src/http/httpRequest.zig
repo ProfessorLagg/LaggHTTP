@@ -14,11 +14,12 @@ pub const HttpRequest = struct {
     body: []const u8,
 
     inline fn parseFirstLine(self: *TSelf, line: []const u8) void {
+        log.debug("parseFirstLine(self: {*}, line: \"{}\")", .{ self, std.zig.fmtEscapes(line) });
         var first_line_split = std.mem.splitScalar(u8, line, ' ');
 
         var val: ?[]const u8 = first_line_split.next();
         if (val == null) {
-            log.err("Invalid request: could not find method field in line: \"{s}\"", .{line});
+            log.warn("Invalid request. Could not find method field in line: \"{}\"", .{std.zig.fmtEscapes(line)});
             self.method = self.raw[0..0];
         } else {
             self.method = val.?;
@@ -26,7 +27,7 @@ pub const HttpRequest = struct {
 
         val = first_line_split.next();
         if (val == null) {
-            log.err("Invalid request: could not find route field in line: \"{s}\"", .{line});
+            log.warn("Invalid request. Could not find route field in line: \"{}\"", .{std.zig.fmtEscapes(line)});
             self.route = self.raw[0..0];
         } else {
             self.route = val.?;
@@ -34,7 +35,7 @@ pub const HttpRequest = struct {
 
         val = first_line_split.next();
         if (val == null) {
-            log.err("Invalid request: could not find version field in line: \"{s}\"", .{line});
+            log.err("Invalid request. Could not find version field in line: \"{}\"", .{std.zig.fmtEscapes(line)});
             self.version = self.raw[0..0];
         } else {
             self.version = val.?;
@@ -44,16 +45,21 @@ pub const HttpRequest = struct {
     /// Parses the raw bytes
     fn parse(self: *TSelf) void {
         // minimum |Method Route Version| string length
-        std.debug.assert(self.raw.len > 14);
 
         var split_reader = std.mem.split(u8, self.raw, "\r\n");
-        self.parseFirstLine(split_reader.first());
 
-        var line_index: usize = 1;
+        var line_index: usize = 0;
         while (split_reader.next()) |line| : (line_index += 1) {
             log.debug("line {d}: \"{}\"", .{ line_index, std.zig.fmtEscapes(line) });
-            // parsing headers
-            // TODO parse header
+            if (line_index == 0) {
+                std.debug.assert(line.len > 14);
+                self.parseFirstLine(line);
+            }
+
+            // Break
+            if (line.len == 0) break;
+
+            // TODO parse headers
             _ = &line;
         }
 
@@ -89,7 +95,8 @@ pub const HttpRequest = struct {
         out_stream: anytype,
     ) !void {
         if (fmt.len != 0) std.fmt.invalidFmtError(fmt, self);
-        try std.fmt.format(out_stream, "[{s}] {s}:{s}", .{self.version, self.method, self.route});
+        const headers_string = "WiP"; // TODO
+        try std.fmt.format(out_stream, "verson: {s}\nmethod: {s}\nroute: {s}\nheaders: {s}\nbody: {}", .{ self.version, self.method, self.route, headers_string, std.zig.fmtEscapes(self.body) });
         _ = &options;
     }
 };

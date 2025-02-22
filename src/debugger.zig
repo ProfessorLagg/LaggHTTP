@@ -11,7 +11,7 @@ pub const std_options: std.Options = .{
         .ReleaseFast => .warn,
     },
     .log_scope_levels = &[_]std.log.ScopeLevel{
-        .{ .scope = .HttpRequest, .level = .info },
+        .{ .scope = .HttpRequest, .level = .debug },
     },
 };
 
@@ -29,11 +29,6 @@ fn debug_httpRequest() !void {
     var server: std.net.Server = try addr.listen(.{});
 
     std.log.info("Server listening on {any}", .{addr});
-
-    const buf_size: comptime_int = 65536;
-    const read_buf: []u8 = try allocator.alloc(u8, buf_size);
-    defer allocator.free(read_buf);
-
     while (true) {
         var client = try server.accept();
         defer client.stream.close();
@@ -42,17 +37,9 @@ fn debug_httpRequest() !void {
         const client_reader = client.stream.reader();
         const client_writer = client.stream.writer();
 
-        const msg_len: usize = client_reader.read(read_buf) catch |err| {
-            std.log.err("failed to read TCP message: {}", .{err});
-            continue;
-        };
-        const msg = read_buf[0..msg_len];
-        std.log.debug("Recieved message: \"{}\"", .{std.zig.fmtEscapes(msg)});
-        var request: LaggHTTP.HttpRequest = try LaggHTTP.HttpRequest.init(allocator, msg);
+        var request: LaggHTTP.HttpRequest = try LaggHTTP.HttpRequest.initReader(allocator, client_reader.any());
         defer request.deinit();
         std.log.info("HttpRequest:\n{}", .{request});
-
-        // try std.fmt.format(client_writer, "HTTP/1.1 200 OK\r\n\r\n{}",.{std.zig.fmtEscapes(msg)});
         try std.fmt.format(client_writer, "HTTP/1.1 200 OK\r\n\r\n", .{});
     }
 }

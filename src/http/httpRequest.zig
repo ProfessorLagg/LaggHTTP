@@ -1,4 +1,5 @@
 const std = @import("std");
+const utils = @import("../utils.zig");
 const log = std.log.scoped(.HttpRequest);
 
 pub const HttpRequest = struct {
@@ -10,7 +11,6 @@ pub const HttpRequest = struct {
     method: []const u8,
     route: []const u8,
     version: []const u8,
-
     body: []const u8,
 
     inline fn parseFirstLine(self: *TSelf, line: []const u8) void {
@@ -79,9 +79,19 @@ pub const HttpRequest = struct {
         const raw: []u8 = try allocator.alloc(u8, bytes.len);
         @memcpy(raw, bytes);
         r.raw = raw;
+
         r.parse();
 
         return r;
+    }
+
+    pub fn initReader(allocator: std.mem.Allocator, reader: std.io.AnyReader) !TSelf {
+        const buf_size: comptime_int = 65536;
+        const buf: []u8 = try allocator.alloc(u8, buf_size);
+        const read_len: usize = try reader.read(buf);
+        const raw = buf[0..read_len];
+
+        return TSelf.init(allocator, raw);
     }
 
     pub fn deinit(self: *TSelf) void {

@@ -56,7 +56,7 @@ pub const HttpRequest = struct {
         while (split_reader.next()) |line| : (line_index += 1) {
             log.debug("line {d}: \"{}\"", .{ line_index, std.zig.fmtEscapes(line) });
             if (line_index == 0) {
-                std.debug.assert(line.len > 14);
+                std.debug.assert(line.len >= 12);
                 self.parseFirstLine(line);
                 continue;
             }

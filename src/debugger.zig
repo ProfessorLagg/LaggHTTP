@@ -13,7 +13,8 @@ pub const std_options: std.Options = .{
         .ReleaseFast => .warn,
     },
     .log_scope_levels = &[_]std.log.ScopeLevel{
-        .{ .scope = .HttpRequest, .level = .debug },
+        .{ .scope = .HttpRequest, .level = .info },
+        .{ .scope = .HttpResponse, .level = .info },
     },
 };
 

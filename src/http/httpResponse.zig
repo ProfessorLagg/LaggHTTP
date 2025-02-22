@@ -87,6 +87,7 @@ pub const HttpResponse = struct {
     }
 
     pub fn setHeader(self: *HttpResponse, key: []const u8, value: []const u8) !void {
+        std.log.debug("{s}.setHeader, key = \"{s}\", value = \"{s}\"", .{ @typeName(@This()), key, value });
         try self.headers.put(key, value);
     }
 
@@ -95,7 +96,18 @@ pub const HttpResponse = struct {
         try self.bodySegments.append(bytes);
     }
 
+    const registreredNurse: []const u8 = "\r\n";
     pub fn write(self: *const HttpResponse, writer: std.io.AnyWriter) !void {
-        try std.fmt.format(writer, "HTTP/1.1 {d} {s}", .{ @intFromEnum(self.status), @tagName(self.status) });
+        try std.fmt.format(writer, "HTTP/1.1 {d} {s}" ++ registreredNurse, .{ @intFromEnum(self.status), @tagName(self.status) });
+        const header_keys = self.headers.keys();
+        for (header_keys) |header_key| {
+            const header_val: []const u8 = self.headers.get(header_key) orelse ""[0..];
+            try std.fmt.format(writer, "{s}: {s}" ++ registreredNurse, .{ header_key, header_val });
+        }
+
+        _ = try writer.write(registreredNurse);
+        for (self.bodySegments.items) |body_segment| {
+            _ = try writer.write(body_segment);
+        }
     }
 };

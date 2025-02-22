@@ -14,7 +14,8 @@ pub const std_options: std.Options = .{
     },
     .log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .HttpRequest, .level = .info },
-        .{ .scope = .HttpResponse, .level = .info },
+        // HttpResponse.setHeader breaks if this is not set to debug
+        .{ .scope = .HttpResponse, .level = .debug },
     },
 };
 

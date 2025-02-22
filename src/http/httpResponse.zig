@@ -87,7 +87,7 @@ pub const HttpResponse = struct {
     }
 
     pub fn setHeader(self: *HttpResponse, key: []const u8, value: []const u8) !void {
-        std.log.debug("{s}.setHeader, key = \"{s}\", value = \"{s}\"", .{ @typeName(@This()), key, value });
+        log.debug("{s}.setHeader, key = \"{s}\", value = \"{s}\"", .{ @typeName(@This()), key, value });
         try self.headers.put(key, value);
     }
 

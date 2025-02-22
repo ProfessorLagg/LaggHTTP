@@ -37,6 +37,8 @@ pub const HttpRequest = struct {
             self.route = val.?;
         }
 
+        // TODO parse query string
+
         val = first_line_split.next();
         if (val == null) {
             log.err("Invalid request. Could not find version field in line: \"{}\"", .{std.zig.fmtEscapes(line)});
@@ -64,7 +66,7 @@ pub const HttpRequest = struct {
             // Break
             if (line.len == 0) break;
 
-            // TODO parse header line
+            // parse header line
             var split_index: usize = 0;
             while (line[split_index] != ':') {
                 std.debug.assert(split_index < line.len);

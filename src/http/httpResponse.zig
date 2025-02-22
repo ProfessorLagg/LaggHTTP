@@ -75,7 +75,7 @@ pub const HttpResponse = struct {
             .allocator = allocator,
             .status = .OK,
             .headers = TMap.init(allocator),
-            .body = TList.init(allocator),
+            .bodySegments = TList.init(allocator),
         };
     }
 
@@ -86,12 +86,16 @@ pub const HttpResponse = struct {
         }
     }
 
-    pub fn addHeader(self: *HttpResponse, key: []const u8, value: []const u8) !void {
+    pub fn setHeader(self: *HttpResponse, key: []const u8, value: []const u8) !void {
         try self.headers.put(key, value);
     }
 
     /// Appends bytes to the body of the response.
-    pub fn writeBody(self: *HttpResponse, bytes: []const u8) !void {
+    pub fn appendBody(self: *HttpResponse, bytes: []const u8) !void {
         try self.bodySegments.append(bytes);
+    }
+
+    pub fn write(self: *const HttpResponse, writer: std.io.AnyWriter) !void {
+        try std.fmt.format(writer, "HTTP/1.1 {d} {s}", .{ @intFromEnum(self.status), @tagName(self.status) });
     }
 };

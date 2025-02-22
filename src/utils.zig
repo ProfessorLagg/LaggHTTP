@@ -32,7 +32,7 @@ pub const mem = struct {
         }
     }
 
-    pub fn equalSlices(comptime T: u8, a: []const T, b: []const T) bool {
+    pub fn equalSlices(comptime T: type, a: []const T, b: []const T) bool {
         if (a.len != b.len) return false;
         for (0..a.len) |i| {
             if (a[i] != b[i]) return false;

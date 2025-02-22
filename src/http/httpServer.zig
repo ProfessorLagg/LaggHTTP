@@ -30,7 +30,7 @@ pub const RequestContext = struct { // NO FOLD
         r.response = HttpResponse.init(r.allocator);
         r.connection = try server.accept();
         var reader = r.connection.stream.reader();
-        r.request = HttpRequest.initReader(r.allocator, reader.any());
+        r.request = try HttpRequest.initReader(r.allocator, reader.any());
         return r;
     }
 
@@ -45,22 +45,22 @@ const TRequestQueue: type = std.DoublyLinkedList(RequestContext);
 allocator: std.mem.Allocator,
 address: std.net.Address,
 
-requestQueueLock: std.Thread.Mutex = .{},
-requestQueue: TRequestQueue,
-
 requestHandlersLock: std.Thread.Mutex = .{},
 requestHandlers: THandlerMap,
+
+requestQueueLock: std.Thread.Mutex = .{},
+requestQueue: TRequestQueue,
 
 // TODO TCP Listener thread
 listenTokenLock: std.Thread.Mutex = .{},
 listenToken: bool = true,
-listenThread: ?std.Thread,
+listenThread: ?std.Thread = null,
 
-pub fn init(allocator: std, config: HttpServerConfig) HttpServer {
+pub fn init(config: HttpServerConfig) HttpServer {
     return HttpServer{ // NO FOLD
-        .allocator = allocator,
+        .allocator = config.allocator,
         .address = std.net.Address.initIp4(config.addr, config.port),
-        .requestHandlers = THandlerMap.init(allocator),
+        .requestHandlers = THandlerMap.init(config.allocator),
         .requestQueue = TRequestQueue{},
     };
 }
@@ -69,6 +69,11 @@ pub fn deinit(self: *HttpServer) void {
     self.listenTokenLock.lock();
     self.listenToken = false;
     self.listenTokenLock.unlock();
+    if (self.listenThread != null) {
+        self.listenThread.?.join();
+    }
+    // TODO handle final requests
+    self.requestHandlers.deinit();
     _ = &self;
 }
 
@@ -76,7 +81,11 @@ pub fn deinit(self: *HttpServer) void {
 /// Routes are case-sensitive
 pub fn addRequestHandler(self: *HttpServer, route: []const u8, handler: *const RequestHandlerFn) bool {
     std.debug.assert(!self.requestHandlers.contains(route));
-    self.requestHandlers.put(route, handler);
+    self.requestHandlers.put(route, handler) catch |err| {
+        log.warn("{}", .{err});
+        return false;
+    };
+    return true;
 }
 
 fn listen(self: *HttpServer) !void {
@@ -93,7 +102,7 @@ fn listen(self: *HttpServer) !void {
         self.listenTokenLock.unlock();
 
         var node: *TRequestQueue.Node = try self.allocator.create(TRequestQueue.Node);
-        node.data = RequestContext.accept(self.allocator, &server);
+        node.data = try RequestContext.accept(self.allocator, &server);
         self.requestQueueLock.lock();
         self.requestQueue.append(node);
         self.requestQueueLock.unlock();
@@ -104,4 +113,28 @@ pub fn run(self: *HttpServer) !void {
     self.listenThread = try std.Thread.spawn(.{
         .allocator = self.allocator,
     }, HttpServer.listen, .{self});
+
+    // TODO Start request handlers from queue
+    while (true) {
+        if (self.requestQueue.len == 0) continue;
+
+        self.requestQueueLock.lock();
+        const node = self.requestQueue.pop();
+        self.requestQueueLock.unlock();
+        if (node == null) continue;
+
+        var ctx: RequestContext = node.?.data;
+        const handlerFn: ?*const RequestHandlerFn = self.requestHandlers.get(ctx.request.route);
+
+        if (handlerFn == null) {
+            ctx.response.status = HttpResponse.StatusCode.NotFound;
+        } else {
+            try @call(std.builtin.CallModifier.auto, handlerFn.?, .{ &ctx.request, &ctx.response });
+        }
+
+        const outer_writer = ctx.connection.stream.writer();
+        const inner_writer = outer_writer.any();
+        try ctx.response.write(inner_writer);
+        ctx.connection.stream.close();
+    }
 }

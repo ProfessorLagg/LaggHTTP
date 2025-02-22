@@ -13,12 +13,12 @@ pub const std_options: std.Options = .{
         .ReleaseFast => .warn,
     },
     .log_scope_levels = &[_]std.log.ScopeLevel{
-        .{ .scope = .HttpRequest, .level = .info },
+        .{ .scope = .HttpRequest, .level = .debug },
     },
 };
 
 pub fn main() !void {
-    try debug_httpRequest();
+    try debug_httpServer();
 }
 
 fn debug_httpRequest() !void {
@@ -84,19 +84,28 @@ fn debug_httpServer() !void {
     const HttpResponse = LaggHTTP.HttpResponse;
 
     const handlers = struct {
-        pub fn (request: *HttpRequest, response: *HttpResponse) !void{
-            std.debug.assert(utils.mem.equalSlices(request.route, "/"[0..]));
-            std.debug.assert(utils.mem.equalSlices(request.version, "HTTP/1.1"[0..]));
-            response.setHeader("Content-Type", "text/html; charset=UTF-8");
-            
+        pub fn rootHandler(request: *HttpRequest, response: *HttpResponse) !void {
+            std.debug.assert(utils.mem.equalSlices(u8, request.route, "/"[0..]));
+            std.debug.assert(utils.mem.equalSlices(u8, request.version, "HTTP/1.1"[0..]));
+            try response.setHeader("Content-Type", "text/html; charset=UTF-8");
         }
     };
 
     var gpa_alloc = std.heap.GeneralPurposeAllocator(.{}){};
-    defer std.debug.assert(gpa_alloc.deinit() == .ok);
+    // defer std.debug.assert(gpa_alloc.deinit() == .ok);
+    defer _ = gpa_alloc.deinit();
     const allocator = gpa_alloc.allocator();
 
-    const server: HttpServer = try HttpServer.init(.{ .allocator = allocator });
-    server.addRequestHandler()
-    server.run();
+    // var heap_alloc = std.heap.HeapAllocator.init();
+    // defer heap_alloc.deinit();
+    // const allocator = heap_alloc.allocator();
+
+    var server: HttpServer = HttpServer.init(.{
+        .allocator = allocator,
+        .addr = .{ 127, 0, 0, 1 },
+        .port = 8080,
+    });
+    defer server.deinit();
+    _ = server.addRequestHandler("/", handlers.rootHandler);
+    try server.run();
 }

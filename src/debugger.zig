@@ -1,5 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const log = std.log.scoped(.Debugger);
+const utils = @import("utils.zig");
 const LaggHTTP = @import("root.zig");
 
 pub const std_options: std.Options = .{
@@ -27,18 +29,18 @@ fn debug_httpRequest() !void {
     const addr: std.net.Address = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 8080);
     var server: std.net.Server = try addr.listen(.{});
 
-    std.log.info("Server listening on {any}", .{addr});
+    log.info("Server listening on {any}", .{addr});
     while (true) {
         var client = try server.accept();
         defer client.stream.close();
-        std.log.info("Client connected: {}", .{client.address});
+        log.info("Client connected: {}", .{client.address});
 
         const client_reader = client.stream.reader();
         const client_writer = client.stream.writer();
 
         var request: LaggHTTP.HttpRequest = try LaggHTTP.HttpRequest.initReader(allocator, client_reader.any());
         defer request.deinit();
-        std.log.info("HttpRequest:\n{}", .{request});
+        log.info("HttpRequest:\n{}", .{request});
         try std.fmt.format(client_writer, "HTTP/1.1 200 OK\r\n\r\n", .{});
     }
 }
@@ -51,18 +53,18 @@ fn debug_tcp() !void {
     const addr: std.net.Address = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 8080);
     var server: std.net.Server = try addr.listen(.{});
 
-    std.log.info("Server listening on {any}", .{addr});
+    log.info("Server listening on {any}", .{addr});
 
     const buf_size: comptime_int = 65536;
     const read_buf: []u8 = try gpa.alloc(u8, buf_size);
     defer gpa.free(read_buf);
 
     while (true) {
-        std.log.debug("Waiting for client to connect", .{});
+        log.debug("Waiting for client to connect", .{});
         var client = try server.accept();
         defer client.stream.close();
 
-        std.log.info("Client connected: {}", .{client.address});
+        log.info("Client connected: {}", .{client.address});
 
         const client_reader = client.stream.reader();
         const client_writer = client.stream.writer();
@@ -70,8 +72,31 @@ fn debug_tcp() !void {
         const msg_len = try client_reader.read(read_buf);
         const msg = read_buf[0..msg_len];
 
-        std.log.info("Recieved message: \"{}\"", .{std.zig.fmtEscapes(msg)});
+        log.info("Recieved message: \"{}\"", .{std.zig.fmtEscapes(msg)});
 
         try client_writer.writeAll(msg);
     }
+}
+
+fn debug_httpServer() !void {
+    const HttpServer = LaggHTTP.HttpServer;
+    const HttpRequest = LaggHTTP.HttpRequest;
+    const HttpResponse = LaggHTTP.HttpResponse;
+
+    const handlers = struct {
+        pub fn (request: *HttpRequest, response: *HttpResponse) !void{
+            std.debug.assert(utils.mem.equalSlices(request.route, "/"[0..]));
+            std.debug.assert(utils.mem.equalSlices(request.version, "HTTP/1.1"[0..]));
+            response.setHeader("Content-Type", "text/html; charset=UTF-8");
+            
+        }
+    };
+
+    var gpa_alloc = std.heap.GeneralPurposeAllocator(.{}){};
+    defer std.debug.assert(gpa_alloc.deinit() == .ok);
+    const allocator = gpa_alloc.allocator();
+
+    const server: HttpServer = try HttpServer.init(.{ .allocator = allocator });
+    server.addRequestHandler()
+    server.run();
 }

@@ -3,22 +3,21 @@ const utils = @import("../utils.zig");
 const log = std.log.scoped(.HttpRequest);
 
 pub const HttpRequest = struct {
-    const TSelf = @This();
-
     /// Map type used for Headers
     const TMap = std.StringArrayHashMap([]const u8);
 
+    // TODO Figure out if i even need this here
     allocator: std.mem.Allocator,
-    raw: []const u8,
 
+    raw: []const u8,
+    headers: TMap,
+    // TODO make these into something smaller than a slice, which on 64bit is 16 bytes long
     method: []const u8,
     route: []const u8,
     version: []const u8,
     body: []const u8,
 
-    headers: TMap,
-
-    inline fn parseFirstLine(self: *TSelf, line: []const u8) void {
+    inline fn parseFirstLine(self: *HttpRequest, line: []const u8) void {
         log.debug("parseFirstLine(self: {*}, line: \"{}\")", .{ self, std.zig.fmtEscapes(line) });
         var first_line_split = std.mem.splitScalar(u8, line, ' ');
 
@@ -48,7 +47,7 @@ pub const HttpRequest = struct {
     }
 
     /// Parses the raw bytes
-    fn parse(self: *TSelf) void {
+    fn parse(self: *HttpRequest) void {
         // minimum |Method Route Version| string length
 
         var split_reader = std.mem.split(u8, self.raw, "\r\n");
@@ -81,8 +80,8 @@ pub const HttpRequest = struct {
         self.body = split_reader.rest();
     }
 
-    pub fn init(allocator: std.mem.Allocator, bytes: []const u8) !TSelf {
-        var r = TSelf{
+    pub fn init(allocator: std.mem.Allocator, bytes: []const u8) !HttpRequest {
+        var r = HttpRequest{
             .allocator = allocator,
             .raw = undefined,
             .method = undefined,
@@ -102,21 +101,21 @@ pub const HttpRequest = struct {
         return r;
     }
 
-    pub fn initReader(allocator: std.mem.Allocator, reader: std.io.AnyReader) !TSelf {
+    pub fn initReader(allocator: std.mem.Allocator, reader: std.io.AnyReader) !HttpRequest {
         const buf_size: comptime_int = 4096 * 16;
         const buf: []u8 = try allocator.alloc(u8, buf_size);
         const read_len: usize = try reader.read(buf);
         const raw = buf[0..read_len];
 
-        return TSelf.init(allocator, raw);
+        return HttpRequest.init(allocator, raw);
     }
 
-    pub fn deinit(self: *TSelf) void {
+    pub fn deinit(self: *HttpRequest) void {
         self.allocator.free(self.raw);
     }
 
     pub fn format(
-        self: TSelf,
+        self: HttpRequest,
         comptime fmt: []const u8,
         options: std.fmt.FormatOptions,
         out_stream: anytype,
@@ -133,5 +132,11 @@ pub const HttpRequest = struct {
         }
         try std.fmt.format(out_stream, "\nbody: {}", .{std.zig.fmtEscapes(self.body)});
         _ = &options;
+    }
+
+    pub fn getHeader(self: *HttpRequest, key: []const u8) ![]const u8 {
+        // TODO
+        _ = &self;
+        _ = &key;
     }
 };

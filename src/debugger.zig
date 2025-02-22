@@ -11,7 +11,7 @@ pub const std_options: std.Options = .{
         .ReleaseFast => .warn,
     },
     .log_scope_levels = &[_]std.log.ScopeLevel{
-        .{ .scope = .HttpRequest, .level = .debug },
+        .{ .scope = .HttpRequest, .level = .info },
     },
 };
 
@@ -23,7 +23,6 @@ fn debug_httpRequest() !void {
     var gpa_alloc = std.heap.GeneralPurposeAllocator(.{}){};
     defer std.debug.assert(gpa_alloc.deinit() == .ok);
     const allocator = gpa_alloc.allocator();
-    // const allocator = std.heap.page_allocator;
 
     const addr: std.net.Address = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 8080);
     var server: std.net.Server = try addr.listen(.{});

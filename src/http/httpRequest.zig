@@ -5,6 +5,9 @@ const log = std.log.scoped(.HttpRequest);
 pub const HttpRequest = struct {
     const TSelf = @This();
 
+    /// Map type used for Headers
+    const TMap = std.StringArrayHashMap([]const u8);
+
     allocator: std.mem.Allocator,
     raw: []const u8,
 
@@ -12,6 +15,8 @@ pub const HttpRequest = struct {
     route: []const u8,
     version: []const u8,
     body: []const u8,
+
+    headers: TMap,
 
     inline fn parseFirstLine(self: *TSelf, line: []const u8) void {
         log.debug("parseFirstLine(self: {*}, line: \"{}\")", .{ self, std.zig.fmtEscapes(line) });
@@ -54,13 +59,23 @@ pub const HttpRequest = struct {
             if (line_index == 0) {
                 std.debug.assert(line.len > 14);
                 self.parseFirstLine(line);
+                continue;
             }
 
             // Break
             if (line.len == 0) break;
 
-            // TODO parse headers
-            _ = &line;
+            // TODO parse header line
+            var split_index: usize = 0;
+            while (line[split_index] != ':') {
+                std.debug.assert(split_index < line.len);
+                split_index += 1;
+            }
+            const keystr: []const u8 = line[0..split_index];
+            const valstr: []const u8 = line[(split_index + 2)..];
+            self.headers.put(keystr, valstr) catch |err| {
+                log.err("Failed to put header. key = \"{s}\", val = \"{s}\", err = \"{}\"", .{ keystr, valstr, err });
+            };
         }
 
         self.body = split_reader.rest();
@@ -74,6 +89,8 @@ pub const HttpRequest = struct {
             .route = undefined,
             .version = undefined,
             .body = undefined,
+
+            .headers = TMap.init(allocator),
         };
 
         const raw: []u8 = try allocator.alloc(u8, bytes.len);
@@ -86,7 +103,7 @@ pub const HttpRequest = struct {
     }
 
     pub fn initReader(allocator: std.mem.Allocator, reader: std.io.AnyReader) !TSelf {
-        const buf_size: comptime_int = 65536;
+        const buf_size: comptime_int = 4096 * 16;
         const buf: []u8 = try allocator.alloc(u8, buf_size);
         const read_len: usize = try reader.read(buf);
         const raw = buf[0..read_len];
@@ -105,8 +122,16 @@ pub const HttpRequest = struct {
         out_stream: anytype,
     ) !void {
         if (fmt.len != 0) std.fmt.invalidFmtError(fmt, self);
-        const headers_string = "WiP"; // TODO
-        try std.fmt.format(out_stream, "verson: {s}\nmethod: {s}\nroute: {s}\nheaders: {s}\nbody: {}", .{ self.version, self.method, self.route, headers_string, std.zig.fmtEscapes(self.body) });
+        // try std.fmt.format(out_stream, "verson: {s}\nmethod: {s}\nroute: {s}\nheaders: {}\nbody: {}", .{ self.version, self.method, self.route, self.headers, std.zig.fmtEscapes(self.body) });
+        try std.fmt.format(out_stream, "verson: {s}\nmethod: {s}\nroute: {s}", .{ self.version, self.method, self.route });
+
+        const header_keys = self.headers.keys();
+        const header_vals = self.headers.values();
+        const header_count: usize = @min(header_keys.len, header_vals.len);
+        for (0..header_count) |i| {
+            try std.fmt.format(out_stream, "\n{s}: {s}", .{ header_keys[i], header_vals[i] });
+        }
+        try std.fmt.format(out_stream, "\nbody: {}", .{std.zig.fmtEscapes(self.body)});
         _ = &options;
     }
 };

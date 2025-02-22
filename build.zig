@@ -8,7 +8,7 @@ const FilePaths = struct {
 
     pub const testPaths = [_][]const u8{ // NO FOLD
         rootPath,
-        "src/httpServer.zig",
+        "src/http/httpServer.zig",
     };
 
     pub fn addTestStep(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *Step {

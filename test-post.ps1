@@ -12,7 +12,7 @@ for($i = 0; $i -lt $count; $i++){
         Sentby = $env:USERNAME;
     }
     $body = "$($data | ConvertTo-Xml -As String)"
-    $responses += Invoke-WebRequest -Uri $uri -Method 'POST' -Body $body -ContentType 'application/json' -DisableKeepAlive
+    $responses += Invoke-WebRequest -Uri $uri -Method 'POST' -Body $body -ContentType 'application/json' -DisableKeepAlive -
 }
 
 #$responses | ft -AutoSize

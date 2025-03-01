@@ -31,10 +31,21 @@ pub fn LinearMap(comptime TKey: type, comptime TVal: type, comptime equals: Equa
             self.allocator.free(self.valbuf);
         }
 
+        fn resize(self: *TSelf, new_len: usize) !void {
+            _ = &new_len;
+            _ = &self;
+        }
+
+        fn grow(self: *TSelf) !void {
+            _ = &self;
+        }
+
+        fn shrink(self: *TSelf) !void {
+            _ = &self;
+        }
+
         pub fn put(self: *TSelf, key: TKey, val: TVal) !void {
-            if (self.keys.len == self.keybuf.len) {
-                // TODO Resize
-            }
+            if (self.keys.len == self.keybuf.len) self.grow();
 
             _ = &key;
             _ = &val;

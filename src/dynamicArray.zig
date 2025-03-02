@@ -1,67 +1,9 @@
 const std = @import("std");
 
-fn resize_allocation(comptime T: type, allocator: std.mem.Allocator, memory: *[]T, len: usize) !void {
-    std.debug.assert(len > 0);
-    if (!allocator.resize(memory.*, len)) {
-        const new_memory: []T = try allocator.alloc(T, len);
-        const min_len: usize = @min(memory.len, new_memory.len);
-        @memcpy(new_memory[0..min_len], memory.*[0..min_len]);
-        allocator.free(memory.*);
-        memory.*.len = new_memory.len;
-        memory.*.ptr = new_memory.ptr;
-    }
-}
-
-fn memcopy(comptime T: type, dst: []T, src: []const T) void {
-    // TODO figure out if this is actually faster than @memcpy or std.mem.copyForwards
-    const count: usize = @min(dst.len, src.len);
-    for (0..count) |i| {
-        dst[i] = src[i];
-    }
-}
-
-/// shifts all the items one to the right, starting at the specified index. Clobbers the last item
-fn shiftLeft(comptime T: type, items: []T, startAt: usize) void {
-    std.debug.assert(startAt < items.len);
-    const last: usize = items.len - 1;
-    if (startAt == last) return;
-    rotateLeft(T, items[startAt..]);
-}
-/// shifts all the items one to the right, starting at the specified index. Clobbers the last item
-fn shiftRight(comptime T: type, items: []T, startAt: usize) void {
-    std.debug.assert(startAt < items.len);
-    const last: usize = items.len - 1;
-    if (startAt == last) return;
-    rotateRight(T, items[startAt..]);
-}
-
-/// rotates all the items one to the left.
-fn rotateLeft(comptime T: type, items: []T) void {
-    const temp: T = items[0];
-    for (1..items.len) |i| {
-        items[i - 1] = items[i];
-    }
-    items[items.len - 1] = temp;
-}
-/// rotates all the items one to the right.
-fn rotateRight(comptime T: type, items: []T) void {
-    var i: usize = items.len - 1;
-    const temp: T = items[i];
-    while (i > 0) : (i -= 1) {
-        items[i] = items[i - 1];
-    }
-    items[0] = temp;
-}
-
-fn calculate_default_capacity(comptime T: type) usize {
-    const size_T: usize = comptime @sizeOf(T);
-    const size_cacheline: usize = comptime std.atomic.cache_line;
-    const T_per_cacheline = comptime @divFloor(size_T, size_cacheline);
-    return comptime @max(2, T_per_cacheline);
-}
+const memutils = @import("utils.zig").mem;
 
 pub fn DynamicArray(comptime T: type) type {
-    const min_capacity = comptime calculate_default_capacity(T);
+    const min_capacity = comptime memutils.calculate_default_capacity(T);
     return struct {
         const TSelf = @This();
         allocator: std.mem.Allocator,
@@ -150,7 +92,7 @@ pub fn DynamicArray(comptime T: type) type {
             }
 
             self.items.len += 1;
-            shiftRight(T, self.items, index);
+            memutils.shiftRight(T, self.items, index);
             self.items[index] = item;
         }
         /// Atempts to insert the item at the specified index. Returns true if successfull
@@ -169,7 +111,7 @@ pub fn DynamicArray(comptime T: type) type {
             }
 
             self.items.len += 1;
-            shiftRight(T, self.items, index);
+            memutils.shiftRight(T, self.items, index);
             self.items[index] = ptr.*;
         }
         /// Atempts to insert the item at the specified index. Returns true if successfull
@@ -208,7 +150,7 @@ pub fn DynamicArray(comptime T: type) type {
         /// Removes the item at the specified index by shifting the array. Preserves ordering
         pub fn removeShift(self: *TSelf, index: usize) !void {
             std.debug.assert(index < self.items.len);
-            rotateLeft(T, self.items[index..]);
+            memutils.rotateLeft(T, self.items[index..]);
             self.items.len -= 1;
 
             try self.shrinkIfNeeded();

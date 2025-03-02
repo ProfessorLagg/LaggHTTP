@@ -1,7 +1,10 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const log = std.log.scoped(.HttpServer);
 const HttpRequest = @import("httpRequest.zig").HttpRequest;
 const HttpResponse = @import("httpResponse.zig").HttpResponse;
+const utils = @import("utils.zig");
+const memutils = utils.mem;
 
 pub const HttpServer = @This();
 pub const RequestHandlerFn = (fn (request: *HttpRequest, response: *HttpResponse) anyerror!void);
@@ -88,10 +91,15 @@ pub fn addRequestHandler(self: *HttpServer, route: []const u8, handler: *const R
     return true;
 }
 
+fn startTCP(self: *HttpServer) !std.net.Server {
+    const server: std.net.Server = try self.address.listen(.{});
+    log.info("Server started on {any}", .{self.address});
+    return server;
+}
+
 fn listen(self: *HttpServer) !void {
-    var server: std.net.Server = try self.address.listen(.{});
+    var server = self.startTCP();
     defer server.deinit();
-    log.info("Server listening on {any}", .{self.address});
 
     while (true) {
         self.listenTokenLock.lock();
@@ -109,7 +117,31 @@ fn listen(self: *HttpServer) !void {
     }
 }
 
-pub fn run(self: *HttpServer) !void {
+fn runSingleThread(self: *HttpServer) !void {
+    const backing_mempage: *memutils.mempage = try std.heap.page_allocator.create(memutils.mempage);
+    defer std.heap.page_allocator.destroy(backing_mempage);
+    const readbuffer = backing_mempage.*[0..];
+
+    var tcp = try self.startTCP();
+    defer tcp.deinit();
+
+    outer: while (true) {
+        const connection = tcp.accept() catch |err| {
+            log.err("Could not accept connection due to error: {}", .{err});
+            continue :outer;
+        };
+
+        const read_size: usize = connection.stream.read(readbuffer) catch |err| {
+            log.err("Could not read from connection to {} due to err: {}", .{ connection.address, err });
+            continue :outer;
+        };
+
+        const read_bytes: []const u8 = readbuffer[0..read_size];
+        // TODO Read the `method`, `route` and `version` fields from the request
+    }
+}
+
+fn runMultiThread(self: *HttpServer) !void {
     self.listenThread = try std.Thread.spawn(.{
         .allocator = self.allocator,
     }, HttpServer.listen, .{self});
@@ -136,5 +168,13 @@ pub fn run(self: *HttpServer) !void {
         const inner_writer = outer_writer.any();
         try ctx.response.write(inner_writer);
         ctx.connection.stream.close();
+    }
+}
+
+pub fn run(self: *HttpServer) !void {
+    if (builtin.single_threaded) {
+        self.runSingleThread();
+    } else {
+        self.runMultiThread();
     }
 }

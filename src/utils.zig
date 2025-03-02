@@ -18,18 +18,78 @@ pub const SliceWriter = struct {
 };
 
 pub const mem = struct {
-    /// tries allocator.resize first, if it fails, reallocates the memory
-    pub fn resize(comptime T: type, allocator: std.mem.Allocator, memory: *[]T, len: usize) !void {
-        std.debug.assert(len > 0);
+    pub fn EqualFn(comptime T: type) type {
+        return (fn (*const T, *const T) bool);
+    }
 
-        if (!allocator.resize(memory.*, len)) {
-            const new_memory: []T = try allocator.alloc(T, len);
-            const min_len: usize = @min(memory.len, new_memory.len);
-            @memcpy(new_memory[0..min_len], memory.*[0..min_len]);
-            allocator.free(memory.*);
-            memory.*.len = new_memory.len;
-            memory.*.ptr = new_memory.ptr;
+    pub const mempage = [std.mem.page_size]u8;
+
+    /// Linear searches the array starting at the beginning
+    pub fn indexOf(comptime T: type, item: T, items: []const T, equals: EqualFn(T)) ?usize {
+        // TODO this could probably use some prefecting and type specefic optimizations
+        for (0..items.len) |i| {
+            if (equals(item, items[i])) return i;
         }
+        return null;
+    }
+
+    /// Resizes the slice, if the new size is smaller, clobbers the high-index items
+    pub fn resize(comptime T: type, allocator: *std.mem.Allocator, memory: *[]T, new_size: usize) !void {
+        std.debug.assert(new_size > 0);
+        const new_memory = try allocator.alloc(T, new_size);
+        memcopy(T, new_memory, memory.*);
+        allocator.free(memory.*);
+        memory.ptr = new_memory.ptr;
+        memory.len = new_memory.len;
+    }
+
+    /// Copies items from src into dst. The number of copied items will be that the of the shortest slice length
+    pub fn memcopy(comptime T: type, dst: []T, src: []const T) void {
+        // TODO figure out if this is actually faster than @memcpy or std.mem.copyForwards
+        const count: usize = @min(dst.len, src.len);
+        for (0..count) |i| {
+            dst[i] = src[i];
+        }
+    }
+
+    /// shifts all the items one to the right, starting at the specified index. Clobbers the last item
+    pub fn shiftLeft(comptime T: type, items: []T, startAt: usize) void {
+        std.debug.assert(startAt < items.len);
+        const last: usize = items.len - 1;
+        if (startAt == last) return;
+        rotateLeft(T, items[startAt..]);
+    }
+    /// shifts all the items one to the right, starting at the specified index. Clobbers the last item
+    pub fn shiftRight(comptime T: type, items: []T, startAt: usize) void {
+        std.debug.assert(startAt < items.len);
+        const last: usize = items.len - 1;
+        if (startAt == last) return;
+        rotateRight(T, items[startAt..]);
+    }
+
+    /// rotates all the items one to the left.
+    pub fn rotateLeft(comptime T: type, items: []T) void {
+        const temp: T = items[0];
+        for (1..items.len) |i| {
+            items[i - 1] = items[i];
+        }
+        items[items.len - 1] = temp;
+    }
+    /// rotates all the items one to the right.
+    pub fn rotateRight(comptime T: type, items: []T) void {
+        var i: usize = items.len - 1;
+        const temp: T = items[i];
+        while (i > 0) : (i -= 1) {
+            items[i] = items[i - 1];
+        }
+        items[0] = temp;
+    }
+
+    pub fn calculate_default_capacity(comptime T: type) usize {
+        const size_T: usize = comptime @sizeOf(T);
+        const size_cacheline: usize = comptime std.atomic.cache_line;
+        const T_per_cacheline = comptime @divFloor(size_T, size_cacheline);
+        return comptime @max(2, T_per_cacheline);
     }
 
     pub fn equalSlices(comptime T: type, a: []const T, b: []const T) bool {

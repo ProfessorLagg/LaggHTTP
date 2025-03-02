@@ -17,6 +17,29 @@ pub const SliceWriter = struct {
     }
 };
 
+pub fn Offset(comptime Tidx: type, comptime Tlen: type) type {
+    const Tidx_info = comptime @typeInfo(Tidx);
+    const Tlen_info = comptime @typeInfo(Tlen);
+    std.debug.assert(Tidx_info == .Int);
+    std.debug.assert(Tidx_info.Int.signedness == .unsigned);
+    std.debug.assert(Tlen_info == .Int);
+    std.debug.assert(Tlen_info.Int.signedness == .unsigned);
+
+    return packed struct {
+        const TSelf = @This();
+        idx: Tidx = 0,
+        len: Tlen = 0,
+
+        pub fn slice(comptime T: type, offset: TSelf, buf: []const T) []const T {
+            std.debug.assert(offset.idx < buf.len);
+            var res = buf[offset.idx..];
+            std.debug.assert(res.len >= offset.len);
+            res.len = @as(@TypeOf(res.len), @intCast(offset.len));
+            return res;
+        }
+    };
+}
+
 pub const mem = struct {
     pub fn EqualFn(comptime T: type) type {
         return (fn (*const T, *const T) bool);

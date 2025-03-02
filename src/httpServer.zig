@@ -5,6 +5,7 @@ const HttpRequest = @import("httpRequest.zig").HttpRequest;
 const HttpResponse = @import("httpResponse.zig").HttpResponse;
 const utils = @import("utils.zig");
 const memutils = utils.mem;
+const Offset = utils.Offset;
 
 pub const HttpServer = @This();
 pub const RequestHandlerFn = (fn (request: *HttpRequest, response: *HttpResponse) anyerror!void);
@@ -118,9 +119,9 @@ fn listen(self: *HttpServer) !void {
 }
 
 fn runSingleThread(self: *HttpServer) !void {
-    const backing_mempage: *memutils.mempage = try std.heap.page_allocator.create(memutils.mempage);
-    defer std.heap.page_allocator.destroy(backing_mempage);
-    const readbuffer = backing_mempage.*[0..];
+    // https://www.rfc-editor.org/rfc/rfc9110#section-4.1-5
+    const readbuffer_size = 4096 * 2;
+    const readbuffer: [readbuffer_size]u8 = undefined;
 
     var tcp = try self.startTCP();
     defer tcp.deinit();
@@ -132,12 +133,25 @@ fn runSingleThread(self: *HttpServer) !void {
         };
 
         const read_size: usize = connection.stream.read(readbuffer) catch |err| {
-            log.err("Could not read from connection to {} due to err: {}", .{ connection.address, err });
+            log.warn("Could not read from connection to {} due to err: {}", .{ connection.address, err });
+            // TODO Write Error Response
+            connection.stream.close();
             continue :outer;
         };
 
         const read_bytes: []const u8 = readbuffer[0..read_size];
+
         // TODO Read the `method`, `route` and `version` fields from the request
+        const request_line_len = std.mem.indexOf(u8, read_bytes, "\r\n") orelse {
+            // Request line is too long or not present
+            log.warn("Request line was too long or not present", .{ connection.address});
+            // TODO Write Error Response
+            connection.stream.close();
+            continue :outer;
+        };
+        const request_line: []const u8 = read_bytes[0..request_line_len];
+        _ = &request_line;
+
     }
 }
 

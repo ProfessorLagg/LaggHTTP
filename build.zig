@@ -44,7 +44,7 @@ pub fn build(b: *Build) void {
         .root_source_file = b.path(FilePaths.debuggerPath),
         .target = target,
         .optimize = optimize,
-        .single_threaded = false,
+        .single_threaded = true,
         .link_libc = false,
     });
     b.installArtifact(debugger_exe);

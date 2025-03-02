@@ -20,8 +20,8 @@ pub const std_options: std.Options = .{
 };
 
 pub fn main() !void {
-    std.debug.print("size of {s} = {d} bytes", .{ @typeName(std.mem.Allocator), @sizeOf(std.mem.Allocator) });
-    //try debug_httpServer();
+    //std.debug.print("size of {s} = {d} bytes", .{ @typeName(std.mem.Allocator), @sizeOf(std.mem.Allocator) });
+    try debug_httpServer();
 }
 
 fn debug_httpRequest() !void {

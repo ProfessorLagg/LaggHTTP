@@ -121,7 +121,8 @@ fn listen(self: *HttpServer) !void {
 fn runSingleThread(self: *HttpServer) !void {
     // https://www.rfc-editor.org/rfc/rfc9110#section-4.1-5
     const readbuffer_size = 4096 * 2;
-    const readbuffer: [readbuffer_size]u8 = undefined;
+    var readbuffer_barr: [readbuffer_size]u8 = undefined;
+    const readbuffer: []u8 = readbuffer_barr[0..];
 
     var tcp = try self.startTCP();
     defer tcp.deinit();
@@ -138,20 +139,18 @@ fn runSingleThread(self: *HttpServer) !void {
             connection.stream.close();
             continue :outer;
         };
-
         const read_bytes: []const u8 = readbuffer[0..read_size];
 
-        // TODO Read the `method`, `route` and `version` fields from the request
         const request_line_len = std.mem.indexOf(u8, read_bytes, "\r\n") orelse {
-            // Request line is too long or not present
-            log.warn("Request line was too long or not present", .{ connection.address});
+            log.warn("Request line was too long or not present", .{});
             // TODO Write Error Response
             connection.stream.close();
             continue :outer;
         };
         const request_line: []const u8 = read_bytes[0..request_line_len];
-        _ = &request_line;
 
+        // TODO Read the `method`, `route` and `version` fields from the request
+        _ = &request_line;
     }
 }
 
@@ -187,8 +186,8 @@ fn runMultiThread(self: *HttpServer) !void {
 
 pub fn run(self: *HttpServer) !void {
     if (builtin.single_threaded) {
-        self.runSingleThread();
+        try self.runSingleThread();
     } else {
-        self.runMultiThread();
+        try self.runMultiThread();
     }
 }

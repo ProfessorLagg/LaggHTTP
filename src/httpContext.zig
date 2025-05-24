@@ -208,17 +208,12 @@ pub const HttpStatusCode = enum(u16) {
     AlreadyReported = 208,
     IMUsed = 226,
     MultipleChoices = 300,
-    MultipleChoices = 300,
-    MovedPermanently = 301,
     MovedPermanently = 301,
     Found = 302,
-    Found = 302,
-    SeeOther = 303,
     SeeOther = 303,
     NotModified = 304,
     UseProxy = 305,
     Unused = 306,
-    RedirectKeepVerb = 307,
     RedirectKeepVerb = 307,
     PermanentRedirect = 308,
     BadRequest = 400,
@@ -241,7 +236,6 @@ pub const HttpStatusCode = enum(u16) {
     ExpectationFailed = 417,
     MisdirectedRequest = 421,
     UnprocessableEntity = 422,
-    UnprocessableEntity = 422,
     Locked = 423,
     FailedDependency = 424,
     UpgradeRequired = 426,
@@ -263,6 +257,7 @@ pub const HttpStatusCode = enum(u16) {
 };
 pub const HttpResponseOptions = struct {};
 pub fn HttpResponse(comptime opt: HttpResponseOptions) type {
+    _ = &opt;
     return struct {
         const Self = @This();
         const versionString = "HTTP/1.1";

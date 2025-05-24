@@ -1,6 +1,8 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
+const SSO = @import("sso.zig").SSO;
+
 const utils = @import("utils.zig");
 const VTableWriter = utils.io.VTableWriter;
 
@@ -20,7 +22,6 @@ pub const HttpHeaderField = struct {
         };
     }
 };
-
 
 // === CONTEXT ===
 pub const HttpContextOptions = struct {
@@ -189,12 +190,95 @@ pub fn HttpRequest(comptime settings: HttpRequestOptions) type {
 }
 
 // === RESPONSE ===
+pub const HttpStatusCode = enum(u16) {
+    Continue = 100,
+    SwitchingProtocols = 101,
+    Processing = 102,
+    EarlyHints = 103,
+    OK = 200,
+    Created = 201,
+    Accepted = 202,
+    NonAuthoritativeInformation = 203,
+    NoContent = 204,
+    ResetContent = 205,
+    PartialContent = 206,
+    MultiStatus = 207,
+    AlreadyReported = 208,
+    IMUsed = 226,
+    MultipleChoices = 300,
+    MultipleChoices = 300,
+    MovedPermanently = 301,
+    MovedPermanently = 301,
+    Found = 302,
+    Found = 302,
+    SeeOther = 303,
+    SeeOther = 303,
+    NotModified = 304,
+    UseProxy = 305,
+    Unused = 306,
+    RedirectKeepVerb = 307,
+    RedirectKeepVerb = 307,
+    PermanentRedirect = 308,
+    BadRequest = 400,
+    Unauthorized = 401,
+    PaymentRequired = 402,
+    Forbidden = 403,
+    NotFound = 404,
+    MethodNotAllowed = 405,
+    NotAcceptable = 406,
+    ProxyAuthenticationRequired = 407,
+    RequestTimeout = 408,
+    Conflict = 409,
+    Gone = 410,
+    LengthRequired = 411,
+    PreconditionFailed = 412,
+    RequestEntityTooLarge = 413,
+    RequestUriTooLong = 414,
+    UnsupportedMediaType = 415,
+    RequestedRangeNotSatisfiable = 416,
+    ExpectationFailed = 417,
+    MisdirectedRequest = 421,
+    UnprocessableEntity = 422,
+    UnprocessableEntity = 422,
+    Locked = 423,
+    FailedDependency = 424,
+    UpgradeRequired = 426,
+    PreconditionRequired = 428,
+    TooManyRequests = 429,
+    RequestHeaderFieldsTooLarge = 431,
+    UnavailableForLegalReasons = 451,
+    InternalServerError = 500,
+    NotImplemented = 501,
+    BadGateway = 502,
+    ServiceUnavailable = 503,
+    GatewayTimeout = 504,
+    HttpVersionNotSupported = 505,
+    VariantAlsoNegotiates = 506,
+    InsufficientStorage = 507,
+    LoopDetected = 508,
+    NotExtended = 510,
+    NetworkAuthenticationRequired = 511,   
+};
 pub const HttpResponseOptions = struct {};
 pub fn HttpResponse(comptime opt: HttpResponseOptions) type {
     return struct {
+        const versionString = "HTTP/1.1";
+        const MapContext = struct {
+            const TSelf = @This();
+            pub fn hash(self: MapContext, key: SSO) u32{
+            
+            }
+            pub fn eql(self: MapContext, a: SSO, b: SSO, idx: usize) bool{
+
+            }
+        };
+
+
         allocator: std.mem.Allocator,
 
-        headers: std.StringArrayHashMap([]const u8),
+        statusCode: HttpStatusCode = .OK,
+        
+        headers: std.ArrayHashMap(SSO),
         body: ?[]const u8 = null,
         pub fn init(allocator: std.mem.Allocator) HttpResponse(opt) {
             return .{
@@ -207,7 +291,7 @@ pub fn HttpResponse(comptime opt: HttpResponseOptions) type {
         }
         /// Sets a header field to the input val. val is cloned.
         pub fn setHeader(self: *HttpResponse(opt), key: []const u8, val: []const u8) !void {
-            const val_clone = utils.mem.clone(u8, self.allocator, val);
+            const val_clone = try SSO.init(self.allocator, val);
             try self.headers.put(key, val_clone);
         }
 
@@ -216,12 +300,12 @@ pub fn HttpResponse(comptime opt: HttpResponseOptions) type {
 
         }
         fn writeHeaderFields(self: *const HttpResponse(opt), writer: anytype) !void {
+            self.setDateHeader();
             
         }
         pub fn write(self: *const HttpResponse(opt), writer: anytype) !void {
-            for (self.headers.keys()) |k| {
-                try std.fmt.format(writer, "")
-            }
+            try std.fmt.format(writer, versionString ++ " {d} {s}\r\n",.{@intFromEnum(self.statusCode), @tagName(self.statusCode)});
+            self.writeHeaderFields(writer);
         }
     };
 }

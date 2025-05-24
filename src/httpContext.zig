@@ -1,7 +1,9 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
-const SSO = @import("sso.zig").SSO;
+const sso = @import("sso.zig");
+const SSO = sso.SSO;
+const SSOMap = sso.SSOMap;
 
 const utils = @import("utils.zig");
 const VTableWriter = utils.io.VTableWriter;
@@ -257,55 +259,58 @@ pub const HttpStatusCode = enum(u16) {
     InsufficientStorage = 507,
     LoopDetected = 508,
     NotExtended = 510,
-    NetworkAuthenticationRequired = 511,   
+    NetworkAuthenticationRequired = 511,
 };
 pub const HttpResponseOptions = struct {};
 pub fn HttpResponse(comptime opt: HttpResponseOptions) type {
     return struct {
+        const Self = @This();
         const versionString = "HTTP/1.1";
-        const MapContext = struct {
-            const TSelf = @This();
-            pub fn hash(self: MapContext, key: SSO) u32{
-            
-            }
-            pub fn eql(self: MapContext, a: SSO, b: SSO, idx: usize) bool{
-
-            }
-        };
-
 
         allocator: std.mem.Allocator,
 
         statusCode: HttpStatusCode = .OK,
-        
-        headers: std.ArrayHashMap(SSO),
+
+        headers: SSOMap,
         body: ?[]const u8 = null,
-        pub fn init(allocator: std.mem.Allocator) HttpResponse(opt) {
+        pub fn init(allocator: std.mem.Allocator) Self {
             return .{
                 .allocator = allocator,
                 .headers = std.StringArrayHashMap([]const u8).init(allocator),
             };
         }
-        pub fn deinit(self: *HttpResponse(opt)) void {
+        pub fn deinit(self: *Self) void {
             for (self.headers.values()) |val| self.allocator.free(val);
         }
         /// Sets a header field to the input val. val is cloned.
-        pub fn setHeader(self: *HttpResponse(opt), key: []const u8, val: []const u8) !void {
-            const val_clone = try SSO.init(self.allocator, val);
-            try self.headers.put(key, val_clone);
+        pub fn setHeader(self: *Self, key: []const u8, val: []const u8) !void {
+            try self.headers.put(key, val);
         }
 
         /// Sets the HTTP Date header to now
-        pub fn setDateHeader(self: *HttpResponse(opt)) !void {
+        pub fn setDateHeader(self: *Self) !void {
+            _ = &self;
+            @compileError("Not yet implementet");
+        }
 
+        fn writeHeaderFields(self: *const Self, writer: anytype) !void {
+            const keys: []const SSO = self.headers.keys();
+            const values: []const SSO = self.headers.values();
+            for (keys, values) |k, v| {
+                try std.fmt.format(writer, "{s}: {s}\r\n", .{ k.toString(), v.toString() });
+            }
         }
-        fn writeHeaderFields(self: *const HttpResponse(opt), writer: anytype) !void {
+        fn writeStatusLine(self: *const Self, writer: anytype) !void {
+            try std.fmt.format(writer, versionString ++ " {d} {s}\r\n", .{ @intFromEnum(self.statusCode), @tagName(self.statusCode) });
+        }
+        pub fn write(self: *const Self, writer: anytype) !void {
+            try self.writeStatusLine(writer);
             self.setDateHeader();
-            
-        }
-        pub fn write(self: *const HttpResponse(opt), writer: anytype) !void {
-            try std.fmt.format(writer, versionString ++ " {d} {s}\r\n",.{@intFromEnum(self.statusCode), @tagName(self.statusCode)});
-            self.writeHeaderFields(writer);
+            try self.writeHeaderFields(writer);
+            if (self.body != null) {
+                try writer.write("\r\n"[0..]);
+                try writer.write(self.body.?[0..]);
+            }
         }
     };
 }

@@ -24,7 +24,7 @@ pub const SSO = union(SSO_TYPE) {
         return len <= SmallString.bufsize;
     }
 
-    pub inline fn init(allocator: *std.mem.Allocator, str: []const u8) !SSO {
+    pub inline fn initAlloc(allocator: *std.mem.Allocator, str: []const u8) !SSO {
         var result: SSO = undefined;
         if (SSO.isSmallLen(str.len)) {
             std.debug.assert(str[0..].len <= SmallString.bufsize);
@@ -39,27 +39,7 @@ pub const SSO = union(SSO_TYPE) {
             return result;
         }
     }
-
-    pub inline fn clone(self: *const SSO, allocator: *std.mem.Allocator) !SSO {
-        const deref = self.*;
-        return switch (deref) {
-            .small => deref,
-            .large => try SSO.init(allocator, self.large),
-        };
-    }
-
-    pub inline fn deinit(self: SSO, allocator: *std.mem.Allocator) void {
-        const tag: SSO_TYPE = @as(SSO_TYPE, self);
-        log.debug("deinit SSO.{s}", .{@tagName(tag)});
-        switch (tag) {
-            .small => {},
-            .large => {
-                allocator.free(self.large);
-            },
-        }
-    }
-
-    pub inline fn create(str: []const u8) SSO {
+    pub inline fn initRef(str: []const u8) SSO {
         var result: SSO = undefined;
         if (SSO.isSmallLen(str.len)) {
             std.debug.assert(str[0..].len <= SmallString.bufsize);
@@ -71,6 +51,25 @@ pub const SSO = union(SSO_TYPE) {
             std.debug.assert(str[0..].len > SmallString.bufsize);
             result = SSO{ .large = @constCast(str) };
             return result;
+        }
+    }
+
+    pub inline fn clone(self: *const SSO, allocator: *std.mem.Allocator) !SSO {
+        const deref = self.*;
+        return switch (deref) {
+            .small => deref,
+            .large => try SSO.initAlloc(allocator, self.large),
+        };
+    }
+
+    pub inline fn deinit(self: SSO, allocator: *std.mem.Allocator) void {
+        const tag: SSO_TYPE = @as(SSO_TYPE, self);
+        log.debug("deinit SSO.{s}", .{@tagName(tag)});
+        switch (tag) {
+            .small => {},
+            .large => {
+                allocator.free(self.large);
+            },
         }
     }
 
@@ -135,7 +134,7 @@ pub const SSOMap = struct {
     }
 
     pub fn indexOf(self: *const SSOMap, key: SSO) ?usize {
-        const k: SSO = SSO.create(key);
+        const k: SSO = SSO.initRef(key);
         var L: isize = 0;
         var R: isize = @bitCast(self.count);
         var i: isize = undefined;
@@ -157,9 +156,9 @@ pub const SSOMap = struct {
 
     /// Adds or overwrites value depending on if key already exists in the map
     pub fn put(self: *SSOMap, key: []const u8, value: []const u8) !void {
-        const k: SSO = try SSO.init(self.allocator, key);
+        const k: SSO = try SSO.initAlloc(self.allocator, key);
         errdefer k.deinit(&self.allocator);
-        const v: SSO = try SSO.init(self.allocator, value);
+        const v: SSO = try SSO.initAlloc(self.allocator, value);
         errdefer v.deinit(&self.allocator);
         const I: InsertIndex = self.getInsertIndex(k);
         if (I.cmp == 0) {
@@ -177,6 +176,12 @@ pub const SSOMap = struct {
 
             1 => self.insertAt(k, v, I.idx + 1),
         }
+    }
+
+    pub fn remove(self: *SSOMap, key: []const u8) !void {
+        const k: SSO = SSO.initRef(key);
+        const i: usize = self.indexOf(k) orelse return void;
+        try self.removeAt(i);
     }
 
     const InsertIndex = packed struct {
@@ -206,6 +211,8 @@ pub const SSOMap = struct {
         std.debug.assert(self.key_buffer.len == self.val_buffer.len);
         return self.key_buffer.len;
     }
+
+    /// Grows key/value buffers to fit capacity if needed
     fn ensureCapacity(self: *SSOMap, capacity: usize) !void {
         const old_capacity = self.getCapacity();
         if (old_capacity >= capacity) return;
@@ -221,6 +228,23 @@ pub const SSOMap = struct {
         self.key_buffer = new_key_buffer;
         self.val_buffer = new_key_buffer;
     }
+
+    /// Shrinks capacity to lowest power of 2 greater than count
+    pub fn shrinkToFit(self: *SSOMap) !void {
+        const old_capacity = self.getCapacity();
+        const new_capacity = std.math.ceilPowerOfTwo(usize, self.count);
+        if (new_capacity < old_capacity) {
+            const new_key_buffer = try self.allocator.alloc(SSO, new_capacity);
+            const new_val_buffer = try self.allocator.alloc(SSO, new_capacity);
+            @memcpy(new_key_buffer[0..], self.key_buffer[0..new_capacity]);
+            @memcpy(new_val_buffer[0..], self.val_buffer[0..new_capacity]);
+            self.allocator.free(self.key_buffer);
+            self.allocator.free(self.val_buffer);
+            self.key_buffer = new_key_buffer;
+            self.val_buffer = new_key_buffer;
+        }
+    }
+
     /// Inserts a new key/value pair into the map.
     /// Increases self.count, and grows capacity if needed
     fn insertAt(self: *SSOMap, k: SSO, v: SSO, index: usize) !void {
@@ -232,7 +256,7 @@ pub const SSOMap = struct {
             return;
         }
 
-        // I have to shift the elems
+        // Shift the key/value pairs down by 1 starting at index
         var ci = self.count;
         while (ci > index) : (ci -= 1) {
             self.key_buffer[ci] = self.key_buffer[ci - 1];
@@ -241,5 +265,24 @@ pub const SSOMap = struct {
         self.count += 1;
         self.key_buffer[index] = k;
         self.val_buffer[index] = v;
+    }
+    fn removeAt(self: *SSOMap, index: usize) !void {
+        std.debug.assert(index < self.count);
+        if (index == self.count - 1) {
+            // remove last element
+            self.key_buffer[index].deinit(&self.allocator);
+            self.val_buffer[index].deinit(&self.allocator);
+            self.count -= 1;
+        } else {
+            self.key_buffer[index].deinit(&self.allocator);
+            self.val_buffer[index].deinit(&self.allocator);
+            self.count -= 1;
+            // Shift the key/value pairs up by 1 starting at index
+            var ci = index;
+            while (ci < self.count) : (ci += 1) {
+                self.key_buffer[ci] = self.key_buffer[ci + 1];
+                self.val_buffer[ci] = self.val_buffer[ci + 1];
+            }
+        }
     }
 };

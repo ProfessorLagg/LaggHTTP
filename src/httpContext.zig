@@ -2,6 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 
 const utils = @import("utils.zig");
+const VTableWriter = utils.io.VTableWriter;
 
 const offsetNs = @import("offset.zig");
 usingnamespace offsetNs;
@@ -10,7 +11,16 @@ usingnamespace offsetNs;
 pub const HttpHeaderField = struct {
     key: []const u8,
     val: []const u8,
+
+    /// Allocates a new HttpHeaderField by cloning both key and val
+    pub fn asClone(allocator: std.mem.Allocator, key: []const u8, val: []const u8) !HttpHeaderField {
+        return HttpHeaderField{
+            .key = try utils.mem.clone(u8, allocator, key),
+            .val = try utils.mem.clone(u8, allocator, val),
+        };
+    }
 };
+
 
 // === CONTEXT ===
 pub const HttpContextOptions = struct {
@@ -25,20 +35,22 @@ pub fn HttpContext(comptime settings: HttpContextOptions) type {
 
         arena: std.heap.ArenaAllocator,
         allocator: std.mem.Allocator,
+        connection: std.net.Server.Connection,
         request: Request,
         response: Response,
 
-        pub fn init(allocator: std.mem.Allocator, stream: std.net.Stream) !Context {
+        pub fn init(allocator: std.mem.Allocator, connection: std.net.Server.Connection) !Context {
             var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(allocator);
             var result: Context = Context{
                 .arena = arena,
                 .allocator = arena.allocator(),
+                .connection = connection,
                 .request = undefined,
                 .response = undefined,
             };
             errdefer result.deinit();
-            result.request = try Request.init(result.allocator, stream.reader());
-            result.response = try Response.init(result.allocator, stream.writer());
+            result.request = try Request.initStream(result.allocator, connection.stream);
+            result.response = Response.init(result.allocator);
             return result;
         }
 
@@ -146,6 +158,9 @@ pub fn HttpRequest(comptime settings: HttpRequestOptions) type {
             _ = &result;
             return result;
         }
+        pub fn initStream(allocator: std.mem.Allocator, stream: std.net.Stream) !HttpRequest(settings) {
+            return @This().init(allocator, stream.reader());
+        }
         pub fn deinit(self: *HttpRequest(settings), allocator: std.mem.Allocator) void {
             allocator.free(self.header);
             allocator.free(self.body);
@@ -175,13 +190,38 @@ pub fn HttpRequest(comptime settings: HttpRequestOptions) type {
 
 // === RESPONSE ===
 pub const HttpResponseOptions = struct {};
-pub fn HttpResponse(comptime settings: HttpResponseOptions) type {
-    _ = &settings;
+pub fn HttpResponse(comptime opt: HttpResponseOptions) type {
     return struct {
-        pub fn init(allocator: std.mem.Allocator, writer: anytype) !HttpResponse(settings) {
-            _ = &allocator;
-            _ = &writer;
-            return .{};
+        allocator: std.mem.Allocator,
+
+        headers: std.StringArrayHashMap([]const u8),
+        body: ?[]const u8 = null,
+        pub fn init(allocator: std.mem.Allocator) HttpResponse(opt) {
+            return .{
+                .allocator = allocator,
+                .headers = std.StringArrayHashMap([]const u8).init(allocator),
+            };
+        }
+        pub fn deinit(self: *HttpResponse(opt)) void {
+            for (self.headers.values()) |val| self.allocator.free(val);
+        }
+        /// Sets a header field to the input val. val is cloned.
+        pub fn setHeader(self: *HttpResponse(opt), key: []const u8, val: []const u8) !void {
+            const val_clone = utils.mem.clone(u8, self.allocator, val);
+            try self.headers.put(key, val_clone);
+        }
+
+        /// Sets the HTTP Date header to now
+        pub fn setDateHeader(self: *HttpResponse(opt)) !void {
+
+        }
+        fn writeHeaderFields(self: *const HttpResponse(opt), writer: anytype) !void {
+            
+        }
+        pub fn write(self: *const HttpResponse(opt), writer: anytype) !void {
+            for (self.headers.keys()) |k| {
+                try std.fmt.format(writer, "")
+            }
         }
     };
 }

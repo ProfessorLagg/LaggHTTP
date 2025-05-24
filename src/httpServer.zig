@@ -42,8 +42,9 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
         }
 
         fn schedule(self: *Self, connection: std.net.Server.Connection) !void {
-            var ctx: HttpContext(opt.ctx) = try HttpContext(opt.ctx).init(self.allocator, connection.stream);
-            defer ctx.deinit();
+            var ctx: HttpContext(opt.ctx) = try HttpContext(opt.ctx).init(self.allocator, connection);
+
+            ctx.deinit();
         }
 
         pub fn listen(self: *Self) !void {

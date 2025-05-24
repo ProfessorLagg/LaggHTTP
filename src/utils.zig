@@ -3,10 +3,14 @@ const std = @import("std");
 
 pub const Strings = struct {
     pub fn indexOf(str: []const u8, find: []const u8) ?usize {
-        std.debug.assert(find.len <= str.len);
+        if (find.len > str.len) {
+            @branchHint(.unlikely);
+            return null;
+        }
+        var slice: []const u8 = str[0..find.len];
         for (0..str.len) |i| {
-            const slice: []const u8 = str[i..(i + find.len)];
             if (std.mem.eql(u8, slice, find)) return i;
+            slice.ptr += 1;
         }
         return null;
     }
@@ -40,5 +44,13 @@ pub const ASCII = struct {
     /// Returns true if char is a number character: '0','1','2','3','4','5','6','7','8','9'
     pub fn isNumberChar(char: u8) bool {
         return char >= '0' and char <= '9';
+    }
+};
+
+pub const mem = struct {
+    pub fn clone(comptime T: type, allocator: *std.mem.Allocator, arr: []const T) ![]T {
+        const result: []T = try allocator.alloc(T, arr.len);
+        @memcpy(result, arr);
+        return result;
     }
 };

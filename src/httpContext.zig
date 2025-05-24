@@ -4,15 +4,52 @@ const std = @import("std");
 const utils = @import("utils.zig");
 
 const offsetNs = @import("offset.zig");
-const Offset = offsetNs.Offset;
-const MinUInt = offsetNs.MinUInt;
+usingnamespace offsetNs;
 
-pub const HttpContextSettings = struct {
-    requestSettings: HttpRequestSettings = .{},
-    responseSettings: HttpResponseSettings = .{},
+// === TYPES ===
+pub const HttpHeaderField = struct {
+    key: []const u8,
+    val: []const u8,
 };
 
-pub const HttpRequestSettings = struct {
+// === CONTEXT ===
+pub const HttpContextOptions = struct {
+    request: HttpRequestOptions = .{},
+    response: HttpResponseOptions = .{},
+};
+pub fn HttpContext(comptime settings: HttpContextOptions) type {
+    return struct {
+        const Context = @This();
+        const Request = HttpRequest(settings.request);
+        const Response = HttpResponse(settings.response);
+
+        arena: std.heap.ArenaAllocator,
+        allocator: std.mem.Allocator,
+        request: Request,
+        response: Response,
+
+        pub fn init(allocator: std.mem.Allocator, stream: std.net.Stream) !Context {
+            var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(allocator);
+            var result: Context = Context{
+                .arena = arena,
+                .allocator = arena.allocator(),
+                .request = undefined,
+                .response = undefined,
+            };
+            errdefer result.deinit();
+            result.request = try Request.init(result.allocator, stream.reader());
+            result.response = try Response.init(result.allocator, stream.writer());
+            return result;
+        }
+
+        pub fn deinit(self: *Context) void {
+            self.arena.deinit();
+        }
+    };
+}
+
+// === REQUEST ===
+pub const HttpRequestOptions = struct {
     /// Maximum size of the request line
     max_requestLine_size: u16 = 4096,
     /// Maximum size of the Headers Section
@@ -22,21 +59,7 @@ pub const HttpRequestSettings = struct {
 
     // TODO Check that max_headers_size is not smaller than max_requestLine_size
 };
-
-pub const HttpResponseSettings = struct {};
-
-pub const HttpContext = struct {
-    allocator: std.mem.Allocator,
-    request: HttpRequest,
-    response: HttpResponse,
-};
-
-pub const HttpHeaderField = struct {
-    key: []const u8,
-    val: []const u8,
-};
-
-pub fn HttpRequest(comptime settings: HttpRequestSettings) type {
+pub fn HttpRequest(comptime settings: HttpRequestOptions) type {
     return struct {
         pub const HttpRequestError = error{
             RequestLineTooLong,
@@ -57,8 +80,8 @@ pub fn HttpRequest(comptime settings: HttpRequestSettings) type {
         rawFields: []const u8,
         body: []const u8,
 
-        fn find_field(fields: []const u8, header_key: []const u8) ?HttpHeaderField {
-            const start: usize = utils.Strings.indexOf(fields, header_key) orelse return null;
+        fn find_field(fields: []const u8, key: []const u8) ?HttpHeaderField {
+            const start: usize = utils.Strings.indexOf(fields, key) orelse return null;
             var slice = fields[start..];
             const end: usize = utils.Strings.indexOf(slice, "\r\n") orelse slice.len;
             slice = slice[0..end];
@@ -74,7 +97,8 @@ pub fn HttpRequest(comptime settings: HttpRequestSettings) type {
             self.path = iter.next() orelse return HttpRequestError.MalformedRequestLine;
             self.version = iter.next() orelse return HttpRequestError.MalformedRequestLine;
         }
-        pub fn init(reader: anytype, allocator: std.mem.Allocator) !HttpRequest(settings) {
+
+        pub fn init(allocator: std.mem.Allocator, reader: anytype) !HttpRequest(settings) {
             var header_buffer: [settings.max_requestLine_size + settings.max_headers_size]u8 = undefined;
             @memset(header_buffer[0..], 0);
             var i: usize = 2;
@@ -122,15 +146,19 @@ pub fn HttpRequest(comptime settings: HttpRequestSettings) type {
             _ = &result;
             return result;
         }
-
         pub fn deinit(self: *HttpRequest(settings), allocator: std.mem.Allocator) void {
             allocator.free(self.header);
             allocator.free(self.body);
         }
 
+        /// Returns the Http Header Field with the specified key if found
+        pub inline fn getField(self: *const HttpRequest(settings), key: []const u8) ?HttpHeaderField {
+            return find_field(self.rawFields, key);
+        }
+
         test init {
             const allocator = std.testing.allocator;
-            
+
             const http_post = @embedFile("testdata/post.txt");
             var stream = std.io.fixedBufferStream(http_post);
             const reader = stream.reader();
@@ -145,8 +173,26 @@ pub fn HttpRequest(comptime settings: HttpRequestSettings) type {
     };
 }
 
-pub const HttpResponse = struct {};
+// === RESPONSE ===
+pub const HttpResponseOptions = struct {};
+pub fn HttpResponse(comptime settings: HttpResponseOptions) type {
+    _ = &settings;
+    return struct {
+        pub fn init(allocator: std.mem.Allocator, writer: anytype) !HttpResponse(settings) {
+            _ = &allocator;
+            _ = &writer;
+            return .{};
+        }
+    };
+}
 
-test "HttpRequest" {
+// === Tests ===
+test HttpContext {
+    _ = HttpContext(.{});
+}
+test HttpRequest {
     _ = HttpRequest(.{});
+}
+test HttpResponse {
+    _ = HttpResponse(.{});
 }

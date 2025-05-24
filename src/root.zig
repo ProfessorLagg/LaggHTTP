@@ -1,7 +1,9 @@
-const std = @import("std");
-
-const httpContextNs = @import("httpContext.zig");
-usingnamespace httpContextNs;
+const httpServerNs = @import("httpServer.zig");
+pub usingnamespace httpServerNs;
 test {
-    _ = httpContextNs;
+    _ = httpServerNs;
+}
+
+test {
+    _ = @import("httpContext.zig");
 }

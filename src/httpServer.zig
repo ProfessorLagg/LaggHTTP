@@ -46,6 +46,7 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
             ctx.response.statusCode = .NotFound;
             try ctx.response.send(connection.stream.writer());
             ctx.deinit();
+            connection.stream.close();
         }
 
         pub fn listen(self: *Self) !void {

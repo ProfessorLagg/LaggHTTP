@@ -20,12 +20,13 @@ pub const SSO = union(SSO_TYPE) {
     small: SmallString,
     large: LargeString,
 
-    pub inline fn isSmallLen(len: usize) bool {
+    pub fn isSmallLen(len: usize) bool {
         return len <= SmallString.bufsize;
     }
 
-    pub inline fn initAlloc(allocator: *std.mem.Allocator, str: []const u8) !SSO {
+    pub fn initAlloc(allocator: std.mem.Allocator, str: []const u8) !SSO {
         var result: SSO = undefined;
+        std.log.debug("New SSO: \"{s}\"", .{str});
         if (SSO.isSmallLen(str.len)) {
             std.debug.assert(str[0..].len <= SmallString.bufsize);
             result = SSO{ .small = SmallString{} };
@@ -39,7 +40,7 @@ pub const SSO = union(SSO_TYPE) {
             return result;
         }
     }
-    pub inline fn initRef(str: []const u8) SSO {
+    pub fn initRef(str: []const u8) SSO {
         var result: SSO = undefined;
         if (SSO.isSmallLen(str.len)) {
             std.debug.assert(str[0..].len <= SmallString.bufsize);
@@ -54,7 +55,7 @@ pub const SSO = union(SSO_TYPE) {
         }
     }
 
-    pub inline fn clone(self: *const SSO, allocator: *std.mem.Allocator) !SSO {
+    pub fn clone(self: *const SSO, allocator: std.mem.Allocator) !SSO {
         const deref = self.*;
         return switch (deref) {
             .small => deref,
@@ -62,7 +63,7 @@ pub const SSO = union(SSO_TYPE) {
         };
     }
 
-    pub inline fn deinit(self: SSO, allocator: *std.mem.Allocator) void {
+    pub fn deinit(self: SSO, allocator: std.mem.Allocator) void {
         const tag: SSO_TYPE = @as(SSO_TYPE, self);
         log.debug("deinit SSO.{s}", .{@tagName(tag)});
         switch (tag) {
@@ -73,7 +74,7 @@ pub const SSO = union(SSO_TYPE) {
         }
     }
 
-    pub inline fn toString(self: *const SSO) []const u8 {
+    pub fn toString(self: *const SSO) []const u8 {
         const tag = @as(SSO_TYPE, self.*);
         return switch (tag) {
             .small => self.small.buf[0..self.small.len],
@@ -81,7 +82,7 @@ pub const SSO = union(SSO_TYPE) {
         };
     }
 
-    inline fn compareNumber(comptime T: type, a: T, b: T) i8 {
+    fn compareNumber(comptime T: type, a: T, b: T) i8 {
         const lt: i8 = @intFromBool(a < b) * @as(i8, -1); // -1 if true, 0 if false
         const gt: i8 = @intFromBool(a > b); // 1 if true, 0 if false
         return lt + gt;
@@ -102,34 +103,34 @@ pub const SSO = union(SSO_TYPE) {
 /// Sorted Map where both keys and values are SSO's
 pub const SSOMap = struct {
     allocator: std.mem.Allocator,
-    key_buffer: []const SSO,
-    val_buffer: []const SSO,
+    key_buffer: []SSO,
+    val_buffer: []SSO,
     count: usize,
 
     pub fn init(allocator: std.mem.Allocator) !SSOMap {
         return SSOMap{
             .allocator = allocator,
-            .key_buffer = try .allocator.alloc(SSO, 1),
-            .val_buffer = try .allocator.alloc(SSO, 1),
+            .key_buffer = try allocator.alloc(SSO, 2),
+            .val_buffer = try allocator.alloc(SSO, 2),
             .count = 0,
         };
     }
 
     pub fn deinit(self: *SSOMap) void {
-        for (self.keys, self.vals) |k, v| {
-            k.deinit(&self.allocator);
-            v.deinit(&self.allocator);
+        for (self.keys(), self.values()) |k, v| {
+            k.deinit(self.allocator);
+            v.deinit(self.allocator);
         }
         self.allocator.free(self.key_buffer);
         self.allocator.free(self.val_buffer);
     }
 
-    pub fn keys(self: *SSOMap) []const SSO {
+    pub fn keys(self: *const SSOMap) []const SSO {
         var r = self.key_buffer[0..];
         r.len = self.count;
         return r;
     }
-    pub fn values(self: *SSOMap) []const SSO {
+    pub fn values(self: *const SSOMap) []const SSO {
         return self.val_buffer[0..self.count];
     }
 
@@ -156,25 +157,33 @@ pub const SSOMap = struct {
 
     /// Adds or overwrites value depending on if key already exists in the map
     pub fn put(self: *SSOMap, key: []const u8, value: []const u8) !void {
-        const k: SSO = try SSO.initAlloc(self.allocator, key);
-        errdefer k.deinit(&self.allocator);
-        const v: SSO = try SSO.initAlloc(self.allocator, value);
-        errdefer v.deinit(&self.allocator);
+        const k: SSO = SSO.initRef(key);
+        const v: SSO = SSO.initRef(value);
+        errdefer v.deinit(self.allocator);
         const I: InsertIndex = self.getInsertIndex(k);
         if (I.cmp == 0) {
             self.val_buffer[I.idx] = v;
         }
 
         switch (I.cmp) {
-            -1 => self.insertAt(k, v, I.idx),
+            -1 => try self.insertAt(
+                try k.clone(self.allocator),
+                try v.clone(self.allocator),
+                I.idx,
+            ),
 
             0 => {
                 self.val_buffer[I.idx].deinit(self.allocator);
-                self.val_buffer[I.idx] = v;
-                k.deinit(self.allocator);
+                self.val_buffer[I.idx] = try v.clone(self.allocator);
             },
 
-            1 => self.insertAt(k, v, I.idx + 1),
+            1 => try self.insertAt(
+                try k.clone(self.allocator),
+                try v.clone(self.allocator),
+                I.idx + 1,
+            ),
+
+            else => unreachable,
         }
     }
 
@@ -270,12 +279,12 @@ pub const SSOMap = struct {
         std.debug.assert(index < self.count);
         if (index == self.count - 1) {
             // remove last element
-            self.key_buffer[index].deinit(&self.allocator);
-            self.val_buffer[index].deinit(&self.allocator);
+            self.key_buffer[index].deinit(self.allocator);
+            self.val_buffer[index].deinit(self.allocator);
             self.count -= 1;
         } else {
-            self.key_buffer[index].deinit(&self.allocator);
-            self.val_buffer[index].deinit(&self.allocator);
+            self.key_buffer[index].deinit(self.allocator);
+            self.val_buffer[index].deinit(self.allocator);
             self.count -= 1;
             // Shift the key/value pairs up by 1 starting at index
             var ci = index;

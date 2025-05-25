@@ -11,6 +11,8 @@ const VTableWriter = utils.io.VTableWriter;
 const offsetNs = @import("offset.zig");
 usingnamespace offsetNs;
 
+const DateTime = @import("dateTime.zig");
+
 // === TYPES ===
 pub const HttpHeaderField = struct {
     key: []const u8,
@@ -36,29 +38,27 @@ pub fn HttpContext(comptime settings: HttpContextOptions) type {
         const Request = HttpRequest(settings.request);
         const Response = HttpResponse(settings.response);
 
-        arena: std.heap.ArenaAllocator,
         allocator: std.mem.Allocator,
         connection: std.net.Server.Connection,
         request: Request,
         response: Response,
 
         pub fn init(allocator: std.mem.Allocator, connection: std.net.Server.Connection) !Context {
-            var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(allocator);
             var result: Context = Context{
-                .arena = arena,
-                .allocator = arena.allocator(),
+                .allocator = allocator,
                 .connection = connection,
                 .request = undefined,
                 .response = undefined,
             };
             errdefer result.deinit();
             result.request = try Request.initStream(result.allocator, connection.stream);
-            result.response = Response.init(result.allocator);
+            result.response = try Response.init(result.allocator);
             return result;
         }
 
         pub fn deinit(self: *Context) void {
-            self.arena.deinit();
+            self.request.deinit(self.allocator);
+            self.response.deinit();
         }
     };
 }
@@ -93,7 +93,7 @@ pub fn HttpRequest(comptime settings: HttpRequestOptions) type {
         path: []const u8,
         version: []const u8,
         rawFields: []const u8,
-        body: []const u8,
+        body: ?[]const u8 = null,
 
         fn find_field(fields: []const u8, key: []const u8) ?HttpHeaderField {
             const start: usize = utils.Strings.indexOf(fields, key) orelse return null;
@@ -140,7 +140,6 @@ pub fn HttpRequest(comptime settings: HttpRequestOptions) type {
                 .method = header[0..0],
                 .path = header[0..0],
                 .version = header[0..0],
-                .body = undefined,
             };
             try result.parse_request_line();
 
@@ -166,7 +165,7 @@ pub fn HttpRequest(comptime settings: HttpRequestOptions) type {
         }
         pub fn deinit(self: *HttpRequest(settings), allocator: std.mem.Allocator) void {
             allocator.free(self.header);
-            allocator.free(self.body);
+            if(self.body != null) allocator.free(self.body.?);
         }
 
         /// Returns the Http Header Field with the specified key if found
@@ -268,14 +267,15 @@ pub fn HttpResponse(comptime opt: HttpResponseOptions) type {
 
         headers: SSOMap,
         body: ?[]const u8 = null,
-        pub fn init(allocator: std.mem.Allocator) Self {
+        pub fn init(allocator: std.mem.Allocator) !Self {
             return .{
                 .allocator = allocator,
-                .headers = std.StringArrayHashMap([]const u8).init(allocator),
+                .headers = try SSOMap.init(allocator),
             };
         }
         pub fn deinit(self: *Self) void {
-            for (self.headers.values()) |val| self.allocator.free(val);
+            self.headers.deinit();
+            if (self.body != null) self.allocator.free(self.body.?);
         }
         /// Sets a header field to the input val. val is cloned.
         pub fn setHeader(self: *Self, key: []const u8, val: []const u8) !void {
@@ -284,8 +284,24 @@ pub fn HttpResponse(comptime opt: HttpResponseOptions) type {
 
         /// Sets the HTTP Date header to now
         pub fn setDateHeader(self: *Self) !void {
-            _ = &self;
-            @compileError("Not yet implementet");
+            const now = DateTime.now();
+            const key: []const u8 = "Date"[0..];
+            var buf: [29]u8 = undefined;
+            const value = try std.fmt.bufPrint(
+                buf[0..],
+                "{s}, {d:0>2} {s} {d:0>4} {d:0>2}:{d:0>2}:{d:0>2} GMT",
+                .{
+                    now.weekdayName3(),
+                    now.day,
+                    now.monthName3(),
+                    now.year,
+                    now.hour,
+                    now.minute,
+                    now.second,
+                },
+            );
+
+            try self.setHeader(key, value);
         }
 
         fn writeHeaderFields(self: *const Self, writer: anytype) !void {
@@ -298,13 +314,13 @@ pub fn HttpResponse(comptime opt: HttpResponseOptions) type {
         fn writeStatusLine(self: *const Self, writer: anytype) !void {
             try std.fmt.format(writer, versionString ++ " {d} {s}\r\n", .{ @intFromEnum(self.statusCode), @tagName(self.statusCode) });
         }
-        pub fn write(self: *const Self, writer: anytype) !void {
+        pub fn send(self: *Self, writer: anytype) !void {
             try self.writeStatusLine(writer);
-            self.setDateHeader();
+            try self.setDateHeader();
             try self.writeHeaderFields(writer);
             if (self.body != null) {
-                try writer.write("\r\n"[0..]);
-                try writer.write(self.body.?[0..]);
+                _ = try writer.write("\r\n"[0..]);
+                _ = try writer.write(self.body.?[0..]);
             }
         }
     };

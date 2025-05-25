@@ -1,81 +1,58 @@
 const std = @import("std");
 
-const DateTime = struct {
-    year: u32,
-    month: u8,
-    day: u8,
-    hour: u8,
-    minute: u8,
-    second: u8,
-    millisecond: u16,
-};
+pub const DateTime = @This();
 
-fn isLeapYear(year: u32) bool {
-    return (@rem(year, 4) == 0 and @rem(year, 100) != 0) or (@rem(year, 400) == 0);
+year: u16 = 0,
+/// Month of year, starting at January = 1
+month: u4 = 0,
+/// Day of month
+day: u5 = 0,
+/// Day of week:
+/// Mon = 0, Tue= 1, Wed = 2, Thu = 3, Fri = 4, Sat = 5, Sun = 6
+weekday: u3 = 0,
+/// Hour of day
+hour: u5 = 0,
+/// Minute of hour
+minute: u6 = 0,
+/// Second of minute
+second: u6 = 0,
+
+fn getWeekday(days: *const std.time.epoch.EpochDay) u3 {
+    const wday64: u64 = (3 + @as(u64, days.day)) % 7;
+    std.debug.assert(wday64 <= 6);
+    return @intCast(wday64);
 }
 
-fn daysInMonth(month: u8, year: u32) u8 {
-    return switch (month) {
-        1 => 31,
-        2 => if (isLeapYear(year)) 29 else 28,
-        3 => 31,
-        4 => 30,
-        5 => 31,
-        6 => 30,
-        7 => 31,
-        8 => 31,
-        9 => 30,
-        10 => 31,
-        11 => 30,
-        12 => 31,
-        else => unreachable,
-    };
+const weekday_names3 = "MonTueWedThuFriSatSun";
+/// 3 letter weekday name in english
+pub fn weekdayName3(self: *const DateTime) []const u8 {
+    const wday: usize = self.weekday;
+    return weekday_names3[wday * 3 .. (wday + 1) * 3];
 }
 
-fn unixTimestampToUTC(timestamp: u64) DateTime {
-    const MILLIS_PER_SEC = 1000;
-    const SECS_PER_MIN = 60;
-    const SECS_PER_HOUR = SECS_PER_MIN * 60;
-    const SECS_PER_DAY = SECS_PER_HOUR * 24;
+const month_names3 = "JanFebMarAprMayJunJulAugSepOctNovDec";
+/// 3 letter month name in english
+pub fn monthName3(self: *const DateTime) []const u8 {
+    const mon: usize = self.month - 1;
+    return weekday_names3[mon * 3 .. (mon + 1) * 3];
+}
+pub fn now() DateTime {
+    var result: DateTime = .{};
 
-    const millisecond: u16 = @intCast(@rem(timestamp, MILLIS_PER_SEC));
-    const seconds = @divTrunc(timestamp, MILLIS_PER_SEC);
+    const timestamp_ns: u64 = @intCast(std.time.nanoTimestamp());
+    const epoc_seconds = std.time.epoch.EpochSeconds{ .secs = @divFloor(timestamp_ns, std.time.ns_per_s) };
+    const epoc_days = epoc_seconds.getEpochDay(); // number of days since the epoch
+    const epoc_daySeconds = epoc_seconds.getDaySeconds();
+    const epoc_yearAndDay = epoc_days.calculateYearDay();
+    const epoc_monthAndDay = epoc_yearAndDay.calculateMonthDay();
 
-    // Compute the time of day.
-    const hour: u8 = @intCast(@divTrunc(@rem(seconds, SECS_PER_DAY), SECS_PER_HOUR));
-    const minute: u8 = @intCast(@divTrunc(@rem(seconds, SECS_PER_HOUR), SECS_PER_MIN));
-    const second: u8 = @intCast(@rem(seconds, SECS_PER_MIN));
+    result.year = epoc_yearAndDay.year;
+    result.month = epoc_monthAndDay.month.numeric();
+    result.day = epoc_monthAndDay.day_index;
+    result.weekday = getWeekday(&epoc_days);
+    result.hour = epoc_daySeconds.getHoursIntoDay();
+    result.minute = epoc_daySeconds.getMinutesIntoHour();
+    result.second = epoc_daySeconds.getSecondsIntoMinute();
 
-    // Compute the date.
-    var days = @divTrunc(seconds, SECS_PER_DAY);
-    var year: u32 = 1970;
-
-    while (true) {
-        const days_in_year: u16 = if (isLeapYear(year)) 366 else 365;
-        if (days >= days_in_year) {
-            days -= days_in_year;
-            year += 1;
-        } else break;
-    }
-
-    var month: u8 = 1;
-    while (true) {
-        const day_of_month = daysInMonth(month, year);
-        if (days >= day_of_month) {
-            days -= day_of_month;
-            month += 1;
-        } else break;
-    }
-
-    const day: u8 = @intCast(days + 1);
-
-    return DateTime{
-        .year = year,
-        .month = month,
-        .day = day,
-        .hour = hour,
-        .minute = minute,
-        .second = second,
-        .millisecond = millisecond,
-    };
+    return result;
 }

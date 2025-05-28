@@ -26,7 +26,7 @@ pub const SSO = union(SSO_TYPE) {
 
     pub fn initAlloc(allocator: std.mem.Allocator, str: []const u8) !SSO {
         var result: SSO = undefined;
-        std.log.debug("New SSO: \"{s}\"", .{str});
+        log.debug("New SSO: \"{s}\"", .{str});
         if (SSO.isSmallLen(str.len)) {
             std.debug.assert(str[0..].len <= SmallString.bufsize);
             result = SSO{ .small = SmallString{} };
@@ -65,10 +65,10 @@ pub const SSO = union(SSO_TYPE) {
 
     pub fn deinit(self: SSO, allocator: std.mem.Allocator) void {
         const tag: SSO_TYPE = @as(SSO_TYPE, self);
-        log.debug("deinit SSO.{s}", .{@tagName(tag)});
         switch (tag) {
             .small => {},
             .large => {
+                log.debug("Freeing SSO: \"{s}\"", .{self.large});
                 allocator.free(self.large);
             },
         }
@@ -159,7 +159,6 @@ pub const SSOMap = struct {
     pub fn put(self: *SSOMap, key: []const u8, value: []const u8) !void {
         const k: SSO = SSO.initRef(key);
         const v: SSO = SSO.initRef(value);
-        errdefer v.deinit(self.allocator);
         const I: InsertIndex = self.getInsertIndex(k);
         if (I.cmp == 0) {
             self.val_buffer[I.idx] = v;

@@ -114,6 +114,7 @@ pub fn HttpRequest(comptime settings: HttpRequestOptions) type {
         }
 
         pub fn init(allocator: std.mem.Allocator, reader: anytype) !HttpRequest(settings) {
+            const start: i128 = std.time.nanoTimestamp();
             var header_buffer: [settings.max_requestLine_size + settings.max_headers_size]u8 = undefined;
             @memset(header_buffer[0..], 0);
             var i: usize = 2;
@@ -157,7 +158,8 @@ pub fn HttpRequest(comptime settings: HttpRequestOptions) type {
                 result.body = body[0..];
             }
 
-            _ = &result;
+            const duration_ns = std.time.nanoTimestamp() - start;
+            std.log.info("Parsing request took: {d} ns", .{duration_ns});
             return result;
         }
         pub fn initStream(allocator: std.mem.Allocator, stream: std.net.Stream) !HttpRequest(settings) {
@@ -165,7 +167,7 @@ pub fn HttpRequest(comptime settings: HttpRequestOptions) type {
         }
         pub fn deinit(self: *HttpRequest(settings), allocator: std.mem.Allocator) void {
             allocator.free(self.header);
-            if(self.body != null) allocator.free(self.body.?);
+            if (self.body != null) allocator.free(self.body.?);
         }
 
         /// Returns the Http Header Field with the specified key if found
@@ -265,27 +267,34 @@ pub fn HttpResponse(comptime opt: HttpResponseOptions) type {
 
         statusCode: HttpStatusCode = .OK,
 
-        headers: SSOMap,
+        headers: std.StringHashMap([]const u8),
         body: ?[]const u8 = null,
         pub fn init(allocator: std.mem.Allocator) !Self {
-            return .{
+            var r = Self{
                 .allocator = allocator,
-                .headers = try SSOMap.init(allocator),
+                .headers = std.StringHashMap([]const u8).init(allocator),
             };
+            try r.setDateHeader();
+            return r;
         }
         pub fn deinit(self: *Self) void {
+            var val_iter = self.headers.valueIterator();
+            while (val_iter.next()) |val_ptr| {
+                self.allocator.free(val_ptr.*);
+            }
             self.headers.deinit();
             if (self.body != null) self.allocator.free(self.body.?);
         }
         /// Sets a header field to the input val. val is cloned.
         pub fn setHeader(self: *Self, key: []const u8, val: []const u8) !void {
-            try self.headers.put(key, val);
+            const vclone = try utils.mem.clone(u8, &self.allocator, val);
+            try self.headers.put(key, vclone);
         }
 
         /// Sets the HTTP Date header to now
         pub fn setDateHeader(self: *Self) !void {
             const now = DateTime.now();
-            const key: []const u8 = "Date"[0..];
+            const key = "Date";
             var buf: [29]u8 = undefined;
             const value = try std.fmt.bufPrint(
                 buf[0..],
@@ -301,27 +310,32 @@ pub fn HttpResponse(comptime opt: HttpResponseOptions) type {
                 },
             );
 
-            try self.setHeader(key, value);
+            try self.setHeader(key[0..], value[0..]);
         }
 
         fn writeHeaderFields(self: *const Self, writer: anytype) !void {
-            const keys: []const SSO = self.headers.keys();
-            const values: []const SSO = self.headers.values();
-            for (keys, values) |k, v| {
-                try std.fmt.format(writer, "{s}: {s}\r\n", .{ k.toString(), v.toString() });
+            var iter = self.headers.iterator();
+            while (iter.next()) |entry| {
+                try std.fmt.format(writer, "{s}: {s}\r\n", .{ entry.key_ptr.*, entry.value_ptr.* });
             }
         }
         fn writeStatusLine(self: *const Self, writer: anytype) !void {
-            try std.fmt.format(writer, versionString ++ " {d} {s}\r\n", .{ @intFromEnum(self.statusCode), @tagName(self.statusCode) });
+            try std.fmt.format(writer, "{s} {d} {s}\r\n", .{ versionString, @intFromEnum(self.statusCode), @tagName(self.statusCode) });
         }
         pub fn send(self: *Self, writer: anytype) !void {
-            try self.writeStatusLine(writer);
+            const start = std.time.nanoTimestamp();
+            var bw_struct = std.io.bufferedWriter(writer);
+            var bw = bw_struct.writer();
+            try self.writeStatusLine(bw);
             try self.setDateHeader();
-            try self.writeHeaderFields(writer);
+            try self.writeHeaderFields(bw);
             if (self.body != null) {
-                _ = try writer.write("\r\n"[0..]);
-                _ = try writer.write(self.body.?[0..]);
+                _ = try bw.write("\r\n"[0..]);
+                _ = try bw.write(self.body.?[0..]);
             }
+            try bw_struct.flush();
+            const duration_ns = std.time.nanoTimestamp() - start;
+            std.log.info("Sending response took {d} ns", .{duration_ns});
         }
     };
 }

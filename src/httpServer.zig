@@ -56,7 +56,9 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
 
             while (self.shouldRun.isSet()) {
                 const connection: std.net.Server.Connection = try listener.accept();
-                try self.schedule(connection);
+                self.schedule(connection) catch |err| {
+                    std.log.err("{any}{any}",.{err, @errorReturnTrace()});
+                };
             }
         }
     };

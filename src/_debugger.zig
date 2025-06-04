@@ -17,7 +17,13 @@ pub const std_options: std.Options = .{
 };
 
 pub fn main() !void {
-    try debugStandardHttpServer();
+    // try debugStandardHttpServer();
+    try debugTCPListener();
+}
+
+fn debugTCPListener() !void {
+    const listener = LaggHTTP.tcp.TCPListener{};
+    _ = &listener;
 }
 
 fn debugStandardHttpServer() !void {

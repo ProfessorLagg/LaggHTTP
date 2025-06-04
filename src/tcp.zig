@@ -1,7 +1,31 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const utils = @import("utils.zig");
 
-pub const TCPHeader = packed struct {    
+// const c = struct {
+//     pub usingnamespace @cImport("netinet/in.h");
+//     pub usingnamespace @cImport("sys/types.h");
+//     pub usingnamespace @cImport("sys/socket.h");
+//     pub usingnamespace @cImport("unistd.h");
+// };
+
+// based on https://heyulong3d.medium.com/network-programming-simple-hello-world-tcp-in-c-c-on-windows-and-unix-539d5f47733e
+const c = switch (builtin.target.os.tag) {
+    .windows => @cImport({
+        @cInclude("winsock2.h");
+    }),
+    // .linux => @cImport({
+    //     @cInclude("unistd.h");
+    //     @cInclude("arpa/inet.h");
+    //     @cInclude("sys/socket.h"); // socket, bind, listen, accept, AF_INET, SOCK_STREAM
+    //     const SOCKET: type = c_int;
+    //     @cDefine("INVALID_SOCKET -1");
+
+    // }),
+    else => @compileError("Not implemented"),
+};
+
+pub const TCPHeader = packed struct {
     /// Identifies the sending port.
     sourcePort: u16,
     /// Identifies the receiving port.
@@ -49,5 +73,134 @@ pub const TCPHeader = packed struct {
 };
 
 pub const TCPOptions = packed struct {
-    
+    // TODO Actually parse these
+
+    /// Just here so the size matches
+    temp: [40]u8 = undefined,
+};
+
+pub const TCPFrame = packed struct {
+    header: TCPHeader,
+    options: TCPOptions,
+    data: []const u8,
+};
+
+pub const TCPListener = switch (builtin.target.os.tag) {
+    .windows => WindowsTCPListener,
+    else => @compileError("Not implemented"),
+};
+
+const WindowsTCPListener = struct {
+    const WindowsTCPListenerError = error{
+        // See https://learn.microsoft.com/en-us/windows/win32/winsock/windows-sockets-error-codes-2
+
+        /// The underlying network subsystem is not ready for network communication.
+        WSASYSNOTREADY,
+        /// The version of Windows Sockets support requested is not provided by this particular Windows Sockets implementation.
+        WSAVERNOTSUPPORTED,
+        /// A blocking Windows Sockets 1.1 operation is in progress.
+        WSAEINPROGRESS,
+        /// A limit on the number of tasks supported by the Windows Sockets implementation has been reached.
+        WSAEPROCLIM,
+        /// The lpWSAData parameter is not a valid pointer.
+        WSAEFAULT,
+
+        /// The socket returned by c.socket function was invalid
+        InvalidSocket,
+
+        /// c.bind function returned SOCKET_ERROR
+        BindFailed,
+
+        /// c.listen function returned SOCKET_ERROR
+        ListenFailed,
+    };
+
+    comptime {
+        if (builtin.target.os.tag != .windows) @compileError("Only works on windows");
+    }
+
+    fn preinit() !void {
+        if (!wsaDataLoaded) {
+            switch (c.WSAStartup(c.MAKEWORD(2, 2), &wsaData)) {
+                0 => {
+                    wsaDataLoaded = true;
+                    return void;
+                },
+                c.WSASYSNOTREADY => return WindowsTCPListenerError.WSASYSNOTREADY,
+                c.WSAVERNOTSUPPORTED => return WindowsTCPListenerError.WSAVERNOTSUPPORTED,
+                c.WSAEINPROGRESS => return WindowsTCPListenerError.WSAEINPROGRESS,
+                c.WSAEPROCLIM => return WindowsTCPListenerError.WSAEPROCLIM,
+                c.WSAEFAULT => return WindowsTCPListenerError.WSAEFAULT,
+            }
+        }
+    }
+
+    pub const IpAddressFamily = enum(c_int) {
+        /// The Internet Protocol version 4 (IPv4) address family
+        IPv4 = c.AF_INET,
+        /// The Internet Protocol version 6 (IPv4) address family
+        IPv6 = c.AF_INET6,
+    };
+    pub const IpAddress = union(IpAddressFamily) {
+        IPv4: u32,
+        IPv6: u128,
+
+        pub fn initIPv4(bytes: [4]u8) IpAddress {
+            return IpAddress{ .IPv4 = std.mem.bytesToValue(u32, bytes) };
+        }
+
+        pub fn initIPv6(bytes: [16]u8) IpAddress {
+            return IpAddress{ .IPv6 = std.mem.bytesToValue(u128, bytes) };
+        }
+    };
+
+    var wsaData: c.WSADATA = undefined;
+    var wsaDataLoaded: bool = false;
+
+    serv_addr: c.SOCKADDR_IN = undefined,
+    serv_socket: c.SOCKET = undefined,
+
+    pub fn initIPv4(addr: u32, port: u16) !WindowsTCPListener {
+        try WindowsTCPListener.preinit();
+
+        var r: WindowsTCPListener = .{};
+        r.serv_addr.sin_family = @intFromEnum(IpAddressFamily.IPv4);
+        r.serv_addr.sin_addr.s_addr = c.htonl(addr);
+        r.serv_addr.sin_port = c.htons(@intCast(port));
+    }
+    pub fn initIPv6(addr: u128, port: u16) !WindowsTCPListener {
+        _ = &addr;
+        _ = &port;
+        @compileError("Not yet Implemented");
+    }
+    pub fn init(addr: IpAddress, port: u16) !WindowsTCPListener {
+        return switch (addr) {
+            .IPv4 => return try initIPv4(addr.IPv4, port),
+            .IPv6 => return try initIPv6(addr.IPv6, port),
+        };
+    }
+    pub fn deinit(self: *WindowsTCPListener) void {
+        c.closesocket(self.serv_socket);
+
+    }
+
+    pub fn bind(self: *WindowsTCPListener) !void {
+        const addr_ptr: *c.SOCKADDR = @ptrCast(&self.serv_addr);
+        const bind_result = c.bind(self.serv_sock, addr_ptr, @sizeOf(c.SOCKADDR_IN));
+        if (bind_result == c.SOCKET_ERROR) {
+            return WindowsTCPListenerError.BindFailed;
+        }
+    }
+
+    pub fn listen(self: *WindowsTCPListener) !void {
+        // try self.bind();
+        const listen_result = c.listen(self.serv_socket, c.SOMAXCONN);
+        if (listen_result == c.SOCKET_ERROR) return WindowsTCPListenerError.ListenFailed;
+    }
+
+    pub fn accept(self: *WindowsTCPListener) !TCPFrame {
+        // TODO
+        _ = self;
+        @compileError("Not yet implemented");
+    }
 };

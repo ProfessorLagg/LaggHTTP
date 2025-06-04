@@ -1,3 +1,8 @@
+pub const tcp = @import("tcp.zig");
+test tcp {
+    _ = tcp;
+}
+
 const httpServerNs = @import("httpServer.zig");
 pub usingnamespace httpServerNs;
 test httpServerNs {

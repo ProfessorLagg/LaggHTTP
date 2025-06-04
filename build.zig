@@ -12,6 +12,8 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
+        .link_libcpp = true,
     });
 
     const debugger_mod = b.createModule(.{
@@ -27,12 +29,14 @@ pub fn build(b: *std.Build) void {
         .linkage = .static,
         .name = "LaggHTTP",
         .root_module = lib_mod,
+        .use_llvm = true,
     });
     b.installArtifact(lib);
 
     const debugger = b.addExecutable(.{
         .name = "LaggHTTP.Debugger",
         .root_module = debugger_mod,
+        .use_llvm = true,
     });
     b.installArtifact(debugger);
 

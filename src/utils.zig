@@ -101,3 +101,6 @@ pub const mem = struct {
         }
     }
 };
+
+pub fn noop() void {}
+pub fn noop_err() anyerror!void{}

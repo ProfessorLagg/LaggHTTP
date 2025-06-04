@@ -113,7 +113,10 @@ pub fn HttpRequest(comptime settings: HttpRequestOptions) type {
             self.version = iter.next() orelse return HttpRequestError.MalformedRequestLine;
         }
 
-        pub fn init(allocator: std.mem.Allocator, reader: anytype) !HttpRequest(settings) {
+        pub fn init_v1(allocator: std.mem.Allocator, base_reader: anytype) !HttpRequest(settings) {
+            var buf_reader = std.io.bufferedReader(base_reader);
+            var reader = buf_reader.reader();
+            
             const start: i128 = std.time.nanoTimestamp();
             var header_buffer: [settings.max_requestLine_size + settings.max_headers_size]u8 = undefined;
             @memset(header_buffer[0..], 0);
@@ -161,6 +164,9 @@ pub fn HttpRequest(comptime settings: HttpRequestOptions) type {
             const duration_ns = std.time.nanoTimestamp() - start;
             std.log.info("Parsing request took: {d} ns", .{duration_ns});
             return result;
+        }
+        pub fn init(allocator: std.mem.Allocator, base_reader: anytype) !HttpRequest(settings){
+            const buffer: [65_]
         }
         pub fn initStream(allocator: std.mem.Allocator, stream: std.net.Stream) !HttpRequest(settings) {
             return @This().init(allocator, stream.reader());

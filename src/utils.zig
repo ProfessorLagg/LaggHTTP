@@ -16,7 +16,12 @@ pub const Strings = struct {
     }
 
     pub fn fastIntParse(comptime T: type, numstr: []const u8) T {
-        // TODO assert T is integer
+        comptime {
+            const Ti = @typeInfo(T);
+            const errmsg = "Expected signed integer type, but found " ++ @typeName(T);
+            if (Ti != .int) @compileError(errmsg);
+            if (Ti.int.signedness != .signed) @compileError(errmsg);
+        }
 
         std.debug.assert(numstr.len > 0);
         const isNegative: bool = numstr[0] == '-';
@@ -27,16 +32,42 @@ pub const Strings = struct {
 
         var i: isize = @as(isize, @intCast(numstr.len)) - 1;
         while (i >= isNegativeInt) : (i -= 1) {
-            const ci: T = @intCast(numstr[@as(usize, @bitCast(i))]);
-            const valid: bool = ci >= 48 and ci <= 57;
+            const charT: T = @intCast(numstr[@as(usize, @bitCast(i))]);
+            const valid: bool = charT >= 48 and charT <= 57;
             const validInt: T = @intFromBool(valid);
             const invalidInt: T = @intFromBool(!valid);
-            result += validInt * ((ci - 48) * m); // '0' = 48
+            result += validInt * ((charT - 48) * m); // '0' = 48
             m = (m * 10 * validInt) + (m * invalidInt);
         }
 
         const sign: T = (-1 * isNegativeInt) + @as(T, @intFromBool(!isNegative));
         return result * sign;
+    }
+
+    pub fn fastUIntParse(comptime T: type, numstr: []const u8) T {
+        comptime {
+            const Ti = @typeInfo(T);
+            const errmsg = "Expected unsigned integer type, but found " ++ @typeName(T);
+            if (Ti != .int) @compileError(errmsg);
+            if (Ti.int.signedness != .unsigned) @compileError(errmsg);
+        }
+
+        std.debug.assert(numstr.len > 0);
+        var result: T = 0;
+        var m: T = 1;
+
+        var i: usize = numstr.len - 1;
+        while (true) {
+            const char: T = numstr[i];
+            const valid: bool = char >= 48 and char <= 57;
+            const validInt: T = @intFromBool(valid);
+            const invalidInt: T = @intFromBool(!valid);
+            result += (validInt * ((char - 48) * m)); // '0' = 48;
+
+            if (i == 0) return result;
+            m = (m * 10 * validInt) + (m * invalidInt);
+            i -= 1;
+        }
     }
 };
 

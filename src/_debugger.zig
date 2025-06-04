@@ -7,20 +7,18 @@ pub const std_options: std.Options = .{
     .log_level = switch (builtin.mode) {
         .Debug => .debug,
         .ReleaseSafe => .debug,
-        .ReleaseSmall => .info,
-        .ReleaseFast => .info,
+        .ReleaseSmall => .err,
+        .ReleaseFast => .err,
     },
-    // .log_scope_levels = &[_]std.log.ScopeLevel{
-    //     .{ .scope = .SortedArrayMap, .level = .warn },
-    //     .{ .scope = .DelimReader, .level = .err },
-    //     .{ .scope = .Lines, .level = .err },
-    //     .{ .scope = .SSO, .level = .err },
-    // },
+    .log_scope_levels = &[_]std.log.ScopeLevel{
+        .{ .scope = .HttpServer, .level = .info },
+    },
 };
 
 pub fn main() !void {
     const allocator = std.heap.c_allocator;
-    var server = try LaggHTTP.HttpServer(.{}).initParseIp(allocator, "127.0.0.1", 5500);
+    const address: std.net.Address = std.net.Address.initIp4(.{127, 0, 0, 1}, 5500);
+    var server = LaggHTTP.HttpServer(.{}).init(allocator, address);
     defer server.deinit();
 
     try server.listen();

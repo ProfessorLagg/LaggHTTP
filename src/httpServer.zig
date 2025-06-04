@@ -5,6 +5,8 @@ const httpContextNs = @import("httpContext.zig");
 const HttpContextOptions = httpContextNs.HttpContextOptions;
 const HttpContext = httpContextNs.HttpContext;
 
+const Log = std.log.scoped(.HttpServer);
+
 pub const HttpServerOptions = struct {
     ctx: HttpContextOptions = .{},
     listenOptions: std.net.Address.ListenOptions = .{},
@@ -54,10 +56,12 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
             defer listener.deinit();
             self.shouldRun.set();
 
+            Log.info("HttpServer listening on address {any}", .{self.address});
+
             while (self.shouldRun.isSet()) {
                 const connection: std.net.Server.Connection = try listener.accept();
                 self.schedule(connection) catch |err| {
-                    std.log.err("{any}{any}",.{err, @errorReturnTrace()});
+                    std.log.err("{any}{any}", .{ err, @errorReturnTrace() });
                 };
             }
         }

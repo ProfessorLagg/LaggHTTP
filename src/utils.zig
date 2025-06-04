@@ -84,4 +84,20 @@ pub const mem = struct {
         @memcpy(result, arr);
         return result;
     }
+
+    pub fn ensureResize(comptime T: type, allocator: std.mem.Allocator, arr_ptr: *[]T, new_len: usize) std.mem.Allocator.Error!void {
+        if (new_len == arr_ptr.len) {
+            @branchHint(.cold);
+            return;
+        }
+        const arr: []T = arr_ptr.*;
+        if (allocator.resize(arr, new_len)) {
+            arr_ptr.* = arr[0..new_len];
+        } else {
+            const new_arr: []T = try allocator.alloc(T, new_len);
+            @memcpy(new_arr[0..arr.len], arr);
+            allocator.free(arr);
+            arr_ptr.* = new_arr[0..];
+        }
+    }
 };

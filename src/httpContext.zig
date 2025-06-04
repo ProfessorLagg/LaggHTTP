@@ -14,6 +14,8 @@ usingnamespace offsetNs;
 
 const DateTime = @import("dateTime.zig");
 
+const Log = std.log.scoped(.HttpContext);
+
 // === TYPES ===
 pub const HttpHeaderField = struct {
     key: []const u8,
@@ -150,77 +152,91 @@ pub fn HttpRequest(comptime settings: HttpRequestOptions) type {
             var result: HttpRequest(settings) = (&EmptyRequest).*;
             var buffer: [settings.max_headers_size]u8 = undefined;
 
-            var streamReader = stream.reader();
             var slice: []const u8 = buffer[0..];
-            slice.len = try streamReader.read(buffer[0..]);
+            slice.len = try stream.read(buffer[0..]);
 
             if (slice.len == buffer.len and bytesToValue(u64, slice[slice.len - 4 ..]) != HeaderBodySeperator_u64) {
                 return HttpRequestError.HeaderTooLong;
             }
 
-            std.log.debug("initial read:\n--- len:{d} ---\n{s}\n---", .{ slice.len, slice });
+            Log.debug("initial read:\n--- len:{d} ---\n{s}\n---", .{ slice.len, slice });
 
             const headers_end: usize = std.mem.indexOf(u8, slice, HeaderBodySeperator) orelse return HttpRequestError.MalformedHeader;
             result.header = try utils.mem.clone(u8, allocator, slice[0..headers_end]);
             errdefer allocator.free(result.header);
-            std.log.debug("parsed result.header", .{});
+            Log.debug("parsed result.header", .{});
 
             if (result.header.len < RequestLineMinLen + 2) return HttpRequestError.MalformedRequestLine;
             result.requestLine = result.header[0..];
             result.requestLine.len = std.mem.indexOf(u8, result.requestLine, RegisteredNurse) orelse return HttpRequestError.MalformedRequestLine;
-            std.log.debug("parsed result.requestLine", .{});
+            Log.debug("parsed result.requestLine", .{});
 
             result.method = result.requestLine[0..];
             result.method.len = std.mem.indexOfScalar(u8, result.method, ' ') orelse {
-                std.log.err("request line \"{s}\" missing method", .{result.requestLine});
+                Log.err("request line \"{s}\" missing method", .{result.requestLine});
                 return HttpRequestError.MalformedRequestLine;
             };
-            std.log.debug("parsed result.method", .{});
+            Log.debug("parsed result.method", .{});
 
             result.path = result.requestLine[result.method.len..];
             result.path.len = std.mem.indexOfScalar(u8, result.path, ' ') orelse {
-                std.log.err("request line \"{s}\" missing path", .{result.requestLine});
+                Log.err("request line \"{s}\" missing path", .{result.requestLine});
                 return HttpRequestError.MalformedRequestLine;
             };
-            std.log.debug("parsed result.path", .{});
+            Log.debug("parsed result.path", .{});
 
             result.version = result.requestLine[result.path.len..];
             if (result.version.len < VersionMinLen) return {
-                std.log.err("request line \"{s}\" missing version", .{result.requestLine});
+                Log.err("request line \"{s}\" missing version", .{result.requestLine});
                 return HttpRequestError.MalformedRequestLine;
             };
-            std.log.debug("parsed result.version", .{});
+            Log.debug("parsed result.version", .{});
 
             result.rawFields = result.header[result.requestLine.len..];
-            std.log.debug("parsed result.rawFields", .{});
+            Log.debug("parsed result.rawFields", .{});
 
-            // Reading
-            const body_fragment0: []const u8 = slice[headers_end..];
-            
-            if(body_fragment0.len > 0){
-                result.body = try utils.mem.clone(u8,allocator, body_fragment0);
+            // Body
+            var body: []u8 = try utils.mem.clone(u8, allocator, slice[headers_end..]);
+            if (slice.len < buffer.len) {
+                // entire body is in buffer
+                result.body = try utils.mem.clone(u8, allocator, slice[headers_end..]);
+            } else {
+                // i gotta read in the remaining body bytes
+                while (true) {
+                    const pre_len: usize = body.len;
+                    slice.len = try stream.read(buffer[0..]);
+                    try utils.mem.ensureResize(u8, allocator, &body, slice.len + pre_len);
+                    @memcpy(body[pre_len..], slice);
+                    if (slice.len < buffer.len) break;
+                }
+                result.body = body;
             }
-            std.log.debug("parsed request.body", .{});
 
-
-            // const body_fragment1: []const u8 = try streamReader.readAllAlloc(allocator, settings.max_body_size - body_fragment0.len);
-            // defer allocator.free(body_fragment1);
-
-            // const body_len: usize = body_fragment0.len + body_fragment1.len;
-            // if (body_len > 0) {
-            //     const result_body: []u8 = try allocator.alloc(u8, body_len);
-            //     errdefer allocator.free(result_body);
-
-            //     @memcpy(result_body[0..body_fragment0.len], body_fragment0);
-            //     @memcpy(result_body[body_fragment0.len..], body_fragment1);
-
-            //     result.body = result_body;
-            // } else {
-            //     result.body = null;
-            // }
+            var body_len: usize = slice.len;
+            var body_fragments = std.ArrayList([]const u8).init(allocator);
+            defer body_fragments.deinit();
+            try body_fragments.append(try utils.mem.clone(u8, allocator, slice));
+            body_len += slice.len;
+            while (slice.len == buffer.len) {
+                slice.len = try stream.read(buffer[0..]);
+                try body_fragments.append(try utils.mem.clone(u8, allocator, slice));
+                body_len += slice.len;
+            }
+            if (body_len > 0) {
+                const result_body: []u8 = try allocator.alloc(u8, body_len);
+                var body_slice = result_body[0..];
+                const items = body_fragments.items;
+                for (0..items.len) |i| {
+                    const fragment = items[i];
+                    defer allocator.free(fragment);
+                    @memcpy(body_slice[0..fragment.len], fragment);
+                    body_slice = body_slice[fragment.len..];
+                }
+            }
+            Log.debug("parsed request.body", .{});
 
             const duration_ns = std.time.nanoTimestamp() - start;
-            std.log.info("Parsing request took {d} ns", .{duration_ns});
+            Log.info("Parsing request took {d} ns", .{duration_ns});
             return result;
         }
         pub fn deinit(self: *HttpRequest(settings), allocator: std.mem.Allocator) void {
@@ -390,9 +406,8 @@ pub fn HttpResponse(comptime opt: HttpResponseOptions) type {
                 _ = try writer.write("\r\n"[0..]);
                 _ = try writer.write(self.body.?[0..]);
             }
-            // try writer.flush();
             const duration_ns = std.time.nanoTimestamp() - start;
-            std.log.info("Sending response took {d} ns", .{duration_ns});
+            Log.info("Sending response took {d} ns", .{duration_ns});
         }
     };
 }

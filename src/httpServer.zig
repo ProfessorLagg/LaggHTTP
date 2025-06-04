@@ -6,10 +6,14 @@ const HttpContextOptions = httpContextNs.HttpContextOptions;
 const HttpContext = httpContextNs.HttpContext;
 
 const Log = std.log.scoped(.HttpServer);
+const PerfLog = std.log.scoped(.Perf);
 
 pub const HttpServerOptions = struct {
     ctx: HttpContextOptions = .{},
-    listenOptions: std.net.Address.ListenOptions = .{},
+    listenOptions: std.net.Address.ListenOptions = .{
+        .reuse_address = true,
+        .reuse_port = true,
+    },
 };
 
 pub fn HttpServer(comptime opt: HttpServerOptions) type {
@@ -43,12 +47,22 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
             _ = &self;
         }
 
+        var total_schedule_time: f64 = 0;
+        var total_schedule_runs: f64 = 0;
+        inline fn total_schedule_mean_time() f64 {
+            return total_schedule_time / total_schedule_runs;
+        }
         fn schedule(self: *Self, connection: std.net.Server.Connection) !void {
+            const start = std.time.nanoTimestamp();
             var ctx: HttpContext(opt.ctx) = try HttpContext(opt.ctx).init(self.allocator, connection);
             ctx.response.statusCode = .NotFound;
             try ctx.response.send(connection.stream);
             ctx.deinit();
             connection.stream.close();
+            const duration_ns = std.time.nanoTimestamp() - start;
+            total_schedule_time += @floatFromInt(duration_ns);
+            total_schedule_runs += 1.0;
+            PerfLog.info("HttpServer.schedule took {d} ns | mean: {d:.0}", .{ duration_ns, total_schedule_mean_time() });
         }
 
         pub fn listen(self: *Self) !void {
@@ -61,7 +75,7 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
             while (self.shouldRun.isSet()) {
                 const connection: std.net.Server.Connection = try listener.accept();
                 self.schedule(connection) catch |err| {
-                    std.log.err("{any}{any}", .{ err, @errorReturnTrace() });
+                    std.log.err("{any}\n{any}", .{ err, @errorReturnTrace() });
                 };
             }
         }

@@ -15,6 +15,7 @@ usingnamespace offsetNs;
 const DateTime = @import("dateTime.zig");
 
 const Log = std.log.scoped(.HttpContext);
+const PerfLog = std.log.scoped(.Perf);
 
 // === TYPES ===
 pub const HttpHeaderField = struct {
@@ -47,6 +48,7 @@ pub fn HttpContext(comptime settings: HttpContextOptions) type {
         response: Response,
 
         pub fn init(allocator: std.mem.Allocator, connection: std.net.Server.Connection) !Context {
+            const start = std.time.nanoTimestamp();
             var result: Context = Context{
                 .allocator = allocator,
                 .connection = connection,
@@ -56,12 +58,18 @@ pub fn HttpContext(comptime settings: HttpContextOptions) type {
             errdefer result.deinit();
             result.request = try Request.init(result.allocator, connection.stream);
             result.response = try Response.init(result.allocator);
+
+            const duration_ns = std.time.nanoTimestamp() - start;
+            PerfLog.info("HttpContext.init took {d} ns", .{duration_ns});
             return result;
         }
 
         pub fn deinit(self: *Context) void {
+            const start = std.time.nanoTimestamp();
             self.request.deinit(self.allocator);
             self.response.deinit();
+            const duration_ns = std.time.nanoTimestamp() - start;
+            PerfLog.info("HttpContext.deinit took {d} ns", .{duration_ns});
         }
     };
 }
@@ -236,7 +244,7 @@ pub fn HttpRequest(comptime settings: HttpRequestOptions) type {
             Log.debug("parsed request.body", .{});
 
             const duration_ns = std.time.nanoTimestamp() - start;
-            Log.info("Parsing request took {d} ns", .{duration_ns});
+            PerfLog.info("Parsing request took {d} ns", .{duration_ns});
             return result;
         }
         pub fn deinit(self: *HttpRequest(settings), allocator: std.mem.Allocator) void {
@@ -407,7 +415,7 @@ pub fn HttpResponse(comptime opt: HttpResponseOptions) type {
                 _ = try writer.write(self.body.?[0..]);
             }
             const duration_ns = std.time.nanoTimestamp() - start;
-            Log.info("Sending response took {d} ns", .{duration_ns});
+            PerfLog.info("Sending response took {d} ns", .{duration_ns});
         }
     };
 }

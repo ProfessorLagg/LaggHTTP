@@ -46,7 +46,7 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
         fn schedule(self: *Self, connection: std.net.Server.Connection) !void {
             var ctx: HttpContext(opt.ctx) = try HttpContext(opt.ctx).init(self.allocator, connection);
             ctx.response.statusCode = .NotFound;
-            try ctx.response.send(connection.stream.writer());
+            try ctx.response.send(connection.stream);
             ctx.deinit();
             connection.stream.close();
         }

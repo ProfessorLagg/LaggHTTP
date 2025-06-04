@@ -8,7 +8,7 @@ pub const std_options: std.Options = .{
         .Debug => .debug,
         .ReleaseSafe => .debug,
         .ReleaseSmall => .err,
-        .ReleaseFast => .err,
+        .ReleaseFast => .info,
     },
     .log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .HttpServer, .level = .info },

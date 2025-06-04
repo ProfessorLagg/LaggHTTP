@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const bytesToValue = std.mem.bytesToValue;
 
 const sso = @import("sso.zig");
 const SSO = sso.SSO;
@@ -51,7 +52,7 @@ pub fn HttpContext(comptime settings: HttpContextOptions) type {
                 .response = undefined,
             };
             errdefer result.deinit();
-            result.request = try Request.initStream(result.allocator, connection.stream);
+            result.request = try Request.init(result.allocator, connection.stream);
             result.response = try Response.init(result.allocator);
             return result;
         }
@@ -65,27 +66,33 @@ pub fn HttpContext(comptime settings: HttpContextOptions) type {
 
 // === REQUEST ===
 pub const HttpRequestOptions = struct {
-    /// Maximum size of the request line
-    max_requestLine_size: u16 = 4096,
-    /// Maximum size of the Headers Section
-    max_headers_size: u16 = 4096,
+    /// Maximum size of the Request line and Headers
+    max_headers_size: u16 = 8192,
     /// Maximum size of the request body
     max_body_size: u32 = 1_073_741_824,
 
     // TODO Check that max_headers_size is not smaller than max_requestLine_size
 };
+
 pub fn HttpRequest(comptime settings: HttpRequestOptions) type {
     return struct {
         pub const HttpRequestError = error{
             RequestLineTooLong,
             MalformedRequestLine,
 
-            HeaderSegmentTooLong,
-            MalformedHeaderSegment,
+            HeaderTooLong,
+            MalformedHeader,
 
             BodyTooLong,
         };
-
+        const EmptyRequest: HttpRequest(settings) = .{
+            .header = undefined,
+            .requestLine = undefined,
+            .method = undefined,
+            .path = undefined,
+            .version = undefined,
+            .rawFields = undefined,
+        };
         /// Contains both request line and HTTP header fields
         header: []const u8,
         requestLine: []const u8,
@@ -113,63 +120,108 @@ pub fn HttpRequest(comptime settings: HttpRequestOptions) type {
             self.version = iter.next() orelse return HttpRequestError.MalformedRequestLine;
         }
 
-        pub fn init_v1(allocator: std.mem.Allocator, base_reader: anytype) !HttpRequest(settings) {
-            var buf_reader = std.io.bufferedReader(base_reader);
-            var reader = buf_reader.reader();
-            
-            const start: i128 = std.time.nanoTimestamp();
-            var header_buffer: [settings.max_requestLine_size + settings.max_headers_size]u8 = undefined;
-            @memset(header_buffer[0..], 0);
-            var i: usize = 2;
-            header_buffer[0] = reader.readByte() catch return HttpRequestError.MalformedRequestLine;
-            header_buffer[1] = reader.readByte() catch return HttpRequestError.MalformedRequestLine;
-            while (!std.mem.eql(u8, header_buffer[i - 2 .. i], "\r\n")) : (i += 1) {
-                if (i >= settings.max_requestLine_size) return HttpRequestError.RequestLineTooLong;
-                header_buffer[i] = reader.readByte() catch return HttpRequestError.MalformedRequestLine;
+        const RegisteredNurse = "\r\n";
+        const RegisteredNurse_u32: u32 = blk: {
+            var r: u32 = 0;
+            var b = std.mem.asBytes(&r);
+            b[0] = RegisteredNurse[0];
+            b[1] = RegisteredNurse[1];
+            break :blk r;
+        };
+        const HeaderBodySeperator = RegisteredNurse ++ RegisteredNurse;
+        const HeaderBodySeperator_u64: u64 = blk: {
+            var r: u64 = 0;
+            var b = std.mem.asBytes(&r);
+            b[0] = HeaderBodySeperator[0];
+            b[1] = HeaderBodySeperator[1];
+            b[2] = HeaderBodySeperator[2];
+            b[3] = HeaderBodySeperator[3];
+            break :blk r;
+        };
+
+        const MethodMinLen: comptime_int = 1;
+        const PathMinLen: comptime_int = 1;
+        const VersionMinLen: comptime_int = 6;
+        /// Minimum length of the request line (excluding the \r\n at the end)
+        const RequestLineMinLen: comptime_int = MethodMinLen + 1 + PathMinLen + 1 + VersionMinLen;
+
+        pub fn init(allocator: std.mem.Allocator, stream: std.net.Stream) !HttpRequest(settings) {
+            const start = std.time.nanoTimestamp();
+            var result: HttpRequest(settings) = (&EmptyRequest).*;
+            var buffer: [settings.max_headers_size]u8 = undefined;
+
+            var streamReader = stream.reader();
+            var slice: []const u8 = buffer[0..];
+            slice.len = try streamReader.read(buffer[0..]);
+
+            if (slice.len == buffer.len and bytesToValue(u64, slice[slice.len - 4 ..]) != HeaderBodySeperator_u64) {
+                return HttpRequestError.HeaderTooLong;
             }
-            const fields_start_i = i;
-            while (!std.mem.eql(u8, header_buffer[i - 4 .. i], "\r\n\r\n")) : (i += 1) {
-                if ((i - fields_start_i) >= settings.max_headers_size) return HttpRequestError.RequestLineTooLong;
-                header_buffer[i] = reader.readByte() catch return HttpRequestError.MalformedRequestLine;
-            }
 
-            var header: []u8 = try allocator.alloc(u8, i);
-            std.mem.copyForwards(u8, header, header_buffer[0..i]);
+            std.log.debug("initial read:\n--- len:{d} ---\n{s}\n---", .{ slice.len, slice });
 
-            var result: HttpRequest(settings) = .{
-                .header = header,
-                .requestLine = header[0 .. fields_start_i - 2],
-                .rawFields = header[fields_start_i..],
+            const headers_end: usize = std.mem.indexOf(u8, slice, HeaderBodySeperator) orelse return HttpRequestError.MalformedHeader;
+            result.header = try utils.mem.clone(u8, allocator, slice[0..headers_end]);
+            errdefer allocator.free(result.header);
+            std.log.debug("parsed result.header", .{});
 
-                .method = header[0..0],
-                .path = header[0..0],
-                .version = header[0..0],
+            if (result.header.len < RequestLineMinLen + 2) return HttpRequestError.MalformedRequestLine;
+            result.requestLine = result.header[0..];
+            result.requestLine.len = std.mem.indexOf(u8, result.requestLine, RegisteredNurse) orelse return HttpRequestError.MalformedRequestLine;
+            std.log.debug("parsed result.requestLine", .{});
+
+            result.method = result.requestLine[0..];
+            result.method.len = std.mem.indexOfScalar(u8, result.method, ' ') orelse {
+                std.log.err("request line \"{s}\" missing method", .{result.requestLine});
+                return HttpRequestError.MalformedRequestLine;
             };
-            try result.parse_request_line();
+            std.log.debug("parsed result.method", .{});
 
-            if (find_field(result.rawFields, "Content-Length")) |field| {
-                const content_length_value: usize = @intCast(utils.Strings.fastIntParse(isize, field.val));
-                if (content_length_value > settings.max_body_size) return HttpRequestError.BodyTooLong;
-                var body: []u8 = try allocator.alloc(u8, content_length_value);
-                const body_size: usize = try reader.read(body);
-                if (body.len != body_size) {
-                    const temp_body: []u8 = try allocator.alloc(u8, body_size);
-                    std.mem.copyForwards(u8, temp_body, body);
-                    allocator.free(body);
-                    body = temp_body;
-                }
-                result.body = body[0..];
+            result.path = result.requestLine[result.method.len..];
+            result.path.len = std.mem.indexOfScalar(u8, result.path, ' ') orelse {
+                std.log.err("request line \"{s}\" missing path", .{result.requestLine});
+                return HttpRequestError.MalformedRequestLine;
+            };
+            std.log.debug("parsed result.path", .{});
+
+            result.version = result.requestLine[result.path.len..];
+            if (result.version.len < VersionMinLen) return {
+                std.log.err("request line \"{s}\" missing version", .{result.requestLine});
+                return HttpRequestError.MalformedRequestLine;
+            };
+            std.log.debug("parsed result.version", .{});
+
+            result.rawFields = result.header[result.requestLine.len..];
+            std.log.debug("parsed result.rawFields", .{});
+
+            // Reading
+            const body_fragment0: []const u8 = slice[headers_end..];
+            
+            if(body_fragment0.len > 0){
+                result.body = try utils.mem.clone(u8,allocator, body_fragment0);
             }
+            std.log.debug("parsed request.body", .{});
+
+
+            // const body_fragment1: []const u8 = try streamReader.readAllAlloc(allocator, settings.max_body_size - body_fragment0.len);
+            // defer allocator.free(body_fragment1);
+
+            // const body_len: usize = body_fragment0.len + body_fragment1.len;
+            // if (body_len > 0) {
+            //     const result_body: []u8 = try allocator.alloc(u8, body_len);
+            //     errdefer allocator.free(result_body);
+
+            //     @memcpy(result_body[0..body_fragment0.len], body_fragment0);
+            //     @memcpy(result_body[body_fragment0.len..], body_fragment1);
+
+            //     result.body = result_body;
+            // } else {
+            //     result.body = null;
+            // }
 
             const duration_ns = std.time.nanoTimestamp() - start;
-            std.log.info("Parsing request took: {d} ns", .{duration_ns});
+            std.log.info("Parsing request took {d} ns", .{duration_ns});
             return result;
-        }
-        pub fn init(allocator: std.mem.Allocator, base_reader: anytype) !HttpRequest(settings){
-            const buffer: [65_]
-        }
-        pub fn initStream(allocator: std.mem.Allocator, stream: std.net.Stream) !HttpRequest(settings) {
-            return @This().init(allocator, stream.reader());
         }
         pub fn deinit(self: *HttpRequest(settings), allocator: std.mem.Allocator) void {
             allocator.free(self.header);
@@ -293,7 +345,7 @@ pub fn HttpResponse(comptime opt: HttpResponseOptions) type {
         }
         /// Sets a header field to the input val. val is cloned.
         pub fn setHeader(self: *Self, key: []const u8, val: []const u8) !void {
-            const vclone = try utils.mem.clone(u8, &self.allocator, val);
+            const vclone = try utils.mem.clone(u8, self.allocator, val);
             try self.headers.put(key, vclone);
         }
 
@@ -319,27 +371,26 @@ pub fn HttpResponse(comptime opt: HttpResponseOptions) type {
             try self.setHeader(key[0..], value[0..]);
         }
 
-        fn writeHeaderFields(self: *const Self, writer: anytype) !void {
+        fn writeHeaderFields(self: *const Self, writer: std.net.Stream.Writer) !void {
             var iter = self.headers.iterator();
             while (iter.next()) |entry| {
                 try std.fmt.format(writer, "{s}: {s}\r\n", .{ entry.key_ptr.*, entry.value_ptr.* });
             }
         }
-        fn writeStatusLine(self: *const Self, writer: anytype) !void {
+        fn writeStatusLine(self: *const Self, writer: std.net.Stream.Writer) !void {
             try std.fmt.format(writer, "{s} {d} {s}\r\n", .{ versionString, @intFromEnum(self.statusCode), @tagName(self.statusCode) });
         }
-        pub fn send(self: *Self, writer: anytype) !void {
+        pub fn send(self: *Self, stream: std.net.Stream) !void {
             const start = std.time.nanoTimestamp();
-            var bw_struct = std.io.bufferedWriter(writer);
-            var bw = bw_struct.writer();
-            try self.writeStatusLine(bw);
+            var writer: std.net.Stream.Writer = stream.writer();
+            try self.writeStatusLine(writer);
             try self.setDateHeader();
-            try self.writeHeaderFields(bw);
+            try self.writeHeaderFields(writer);
             if (self.body != null) {
-                _ = try bw.write("\r\n"[0..]);
-                _ = try bw.write(self.body.?[0..]);
+                _ = try writer.write("\r\n"[0..]);
+                _ = try writer.write(self.body.?[0..]);
             }
-            try bw_struct.flush();
+            // try writer.flush();
             const duration_ns = std.time.nanoTimestamp() - start;
             std.log.info("Sending response took {d} ns", .{duration_ns});
         }

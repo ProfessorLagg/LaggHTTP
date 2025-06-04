@@ -79,7 +79,7 @@ pub const ASCII = struct {
 };
 
 pub const mem = struct {
-    pub fn clone(comptime T: type, allocator: *std.mem.Allocator, arr: []const T) ![]T {
+    pub fn clone(comptime T: type, allocator: std.mem.Allocator, arr: []const T) ![]T {
         const result: []T = try allocator.alloc(T, arr.len);
         @memcpy(result, arr);
         return result;

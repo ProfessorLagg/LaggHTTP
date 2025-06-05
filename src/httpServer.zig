@@ -1,12 +1,13 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
+const tcp = @import("tcp.zig");
 const httpContextNs = @import("httpContext.zig");
 const HttpContextOptions = httpContextNs.HttpContextOptions;
 const HttpContext = httpContextNs.HttpContext;
 
-const Log = std.log.scoped(.HttpServer);
-const PerfLog = std.log.scoped(.Perf);
+const log = std.log.scoped(.HttpServer);
+const perfLog = std.log.scoped(.Perf);
 
 pub const HttpServerOptions = struct {
     ctx: HttpContextOptions = .{},
@@ -21,19 +22,17 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
         const Self = @This();
 
         allocator: std.mem.Allocator,
-        address: std.net.Address,
+        address: tcp.TCPListener.IpAddress,
+        port: u16,
 
         shouldRun: std.Thread.ResetEvent = .{},
 
-        pub fn init(allocator: std.mem.Allocator, address: std.net.Address) Self {
+        pub fn init(allocator: std.mem.Allocator, address: tcp.TCPListener.IpAddress, port: u16) Self {
             return Self{
                 .allocator = allocator,
                 .address = address,
+                .port = port,
             };
-        }
-        pub fn initParseIp(allocator: std.mem.Allocator, addressString: []const u8, port: u16) !Self {
-            const addr = try std.net.Address.parseIp(addressString, port);
-            return Self.init(allocator, addr);
         }
         pub fn initPublicHttp(allocator: std.mem.Allocator) Self {
             const addr: std.net.Address = comptime std.net.Address.parseIp("0.0.0.0", 80) catch @compileError("Could not parse IP");
@@ -52,30 +51,38 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
         inline fn total_schedule_mean_time() f64 {
             return total_schedule_time / total_schedule_runs;
         }
-        fn schedule(self: *Self, connection: std.net.Server.Connection) !void {
+        fn schedule(self: *Self, connection: tcp.TCPConnection) !void {
             const start = std.time.nanoTimestamp();
             var ctx: HttpContext(opt.ctx) = try HttpContext(opt.ctx).init(self.allocator, connection);
             ctx.response.statusCode = .NotFound;
-            try ctx.response.send(connection.stream);
+            try ctx.response.send(connection);
             ctx.deinit();
-            connection.stream.close();
+            try connection.close();
             const duration_ns = std.time.nanoTimestamp() - start;
             total_schedule_time += @floatFromInt(duration_ns);
             total_schedule_runs += 1.0;
-            PerfLog.info("HttpServer.schedule took {d} ns | mean: {d:.0}", .{ duration_ns, total_schedule_mean_time() });
+            perfLog.info("HttpServer.schedule took {d} ns | mean: {d:.0}", .{ duration_ns, total_schedule_mean_time() });
         }
 
         pub fn listen(self: *Self) !void {
-            var listener: std.net.Server = try self.address.listen(opt.listenOptions);
+            var listener: tcp.TCPListener = try tcp.TCPListener.init(self.address, self.port);
             defer listener.deinit();
+
+            try listener.bind();
+            try listener.listen();
+
+            log.info("HttpServer listening on address {any}", .{self.address});
             self.shouldRun.set();
-
-            Log.info("HttpServer listening on address {any}", .{self.address});
-
             while (self.shouldRun.isSet()) {
-                const connection: std.net.Server.Connection = try listener.accept();
+                const connection = listener.accept() catch |err| {
+                    @branchHint(.cold);
+                    log.err("{any}\n{any}", .{ err, @errorReturnTrace() });
+                    continue;
+                };
                 self.schedule(connection) catch |err| {
-                    std.log.err("{any}\n{any}", .{ err, @errorReturnTrace() });
+                    @branchHint(.cold);
+                    log.err("{any}\n{any}", .{ err, @errorReturnTrace() });
+                    continue;
                 };
             }
         }

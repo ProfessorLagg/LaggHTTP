@@ -1,6 +1,24 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
+pub const math = struct {
+    pub fn log10_int_ceil(comptime T: type, num: T) T {
+        comptime {
+            const Ti = @typeInfo(T);
+            const errmsg = "Expected integer type, but found " ++ @typeName(T);
+            if (Ti != .int) @compileError(errmsg);
+        }
+        const log10_floor: T = std.math.log10_int(num);
+        const pow10: T = powi_panic(T, 10, log10_floor);
+        const addOne: bool = pow10 == num;
+        return log10_floor + @intFromBool(addOne);
+    }
+
+    pub inline fn powi_panic(comptime T: type, x: T, y: T) T {
+        return std.math.powi(T, x, y) catch |err| @panic(err);
+    }
+};
+
 pub const strings = struct {
     pub fn indexOf(str: []const u8, find: []const u8) ?usize {
         if (find.len > str.len) {
@@ -15,6 +33,7 @@ pub const strings = struct {
         return null;
     }
 
+    /// Converts base 10 utf-8 string to a signed integer
     pub fn fastIntParse(comptime T: type, numstr: []const u8) T {
         comptime {
             const Ti = @typeInfo(T);
@@ -43,7 +62,7 @@ pub const strings = struct {
         const sign: T = (-1 * isNegativeInt) + @as(T, @intFromBool(!isNegative));
         return result * sign;
     }
-
+    /// Converts base 10 utf-8 string to an unsigned integer
     pub fn fastUIntParse(comptime T: type, numstr: []const u8) T {
         comptime {
             const Ti = @typeInfo(T);
@@ -67,6 +86,56 @@ pub const strings = struct {
             if (i == 0) return result;
             m = (m * 10 * validInt) + (m * invalidInt);
             i -= 1;
+        }
+    }
+
+    /// Convert signed integer to base 10 utf-8 string
+    pub fn fastIntToString(comptime T: type, num: T) []const u8 {
+        // TODO
+        _ = num;
+        @compileError("Not yet implemented");
+    }
+
+    /// Convert unsigned integer to base 10 utf-8 string
+    pub fn fastUIntToString(comptime T: type, num: T) []const u8 {
+        comptime {
+            const Ti = @typeInfo(T);
+            const errmsg = "Expected unsigned integer type, but found " ++ @typeName(T);
+            if (Ti != .int) {
+                @compileLog(errmsg);
+                unreachable;
+            }
+            if (Ti.int.signedness != .unsigned) {
+                @compileLog(errmsg);
+                unreachable;
+            }
+        }
+        const max_result_len: usize = comptime math.log10_int_ceil(usize, @intCast(std.math.maxInt(T)));
+
+        if (num == 0) return "0";
+        var result: [max_result_len]u8 = undefined;
+        var n: T = num;
+        var i: usize = 0;
+        while (true) {
+            result[i] = @as(u8, @intCast((@rem(n, 10)))) + 48;
+            i += 1;
+            n = @divFloor(n, 10);
+            if (n == 0) break;
+        }
+        std.mem.reverse(u8, result[0..i]);
+        return result[0..i];
+    }
+
+    test fastUIntToString {
+        var buf: [16]u8 = undefined;
+        var i: usize = 1_000_000;
+        while (i >= 0) : (i -= 1) {
+            const expect = try std.fmt.bufPrint(&buf, "{d}", .{i});
+            const found = fastUIntToString(usize, i);
+            std.testing.expectEqualStrings(expect, found) catch |err| {
+                std.log.err("\ne:\"{s}\"\nf:\"{s}\"", .{ expect, found });
+                return err;
+            };
         }
     }
 };
@@ -196,3 +265,10 @@ pub fn PackedSlice(comptime T: type) type {
 
 pub fn noop() void {}
 pub fn noop_err() anyerror!void {}
+
+test math {
+    _ = math;
+}
+test strings {
+    _ = strings;
+}

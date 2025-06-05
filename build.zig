@@ -5,15 +5,15 @@ const std = @import("std");
 // runner.
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
+    const optimize: std.builtin.OptimizeMode = b.standardOptimizeOption(.{});
 
     // ===== MODULES =====
     const lib_mod = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = true,
-        .link_libcpp = true,
+        .single_threaded = true,
+        .omit_frame_pointer = optimize == .ReleaseFast
     });
 
     const debugger_mod = b.createModule(.{

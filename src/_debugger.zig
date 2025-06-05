@@ -12,14 +12,16 @@ pub const std_options: std.Options = .{
     },
     .log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .HttpServer, .level = .info },
-        .{ .scope = .Perf, .level = .info },
+        .{ .scope = .Perf, .level = .err },
     },
 };
 
 pub fn main() !void {
-    try debugStandardHttpServer();
+    try debugHttpServer();
+    // try debugStandardHttpServer();
     // try debugTCPListener();
     // try debug_ws2_32();
+    // try debug_ws2_32_old();
 }
 
 fn debug_ws2_32_old() !void {
@@ -175,7 +177,7 @@ fn debug_ws2_32() !void {
 }
 
 fn debugTCPListener() !void {
-    const TCPListener = LaggHTTP.tcp.WindowsTCPListener;
+    const TCPListener = LaggHTTP.tcp.TCPListener;
     const IpAddress = TCPListener.IpAddress;
     const addr: IpAddress = IpAddress.initIPv4(.{ 127, 0, 0, 1 });
     var listener: TCPListener = try TCPListener.init(addr, 5500);
@@ -202,8 +204,9 @@ fn debugStandardHttpServer() !void {
 
 fn debugHttpServer() !void {
     const allocator = std.heap.c_allocator;
-    const address: std.net.Address = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 5500);
-    var server = LaggHTTP.HttpServer(.{}).init(allocator, address);
+    const address: LaggHTTP.tcp.TCPListener.IpAddress = LaggHTTP.tcp.TCPListener.IpAddress.initIPv4(.{ 127, 0, 0, 1 });
+    const port: u16 = 5500;
+    var server = LaggHTTP.HttpServer(.{}).init(allocator, address, port);
     defer server.deinit();
 
     try server.listen();

@@ -3,28 +3,6 @@ const std = @import("std");
 const utils = @import("utils.zig");
 const log = std.log.scoped(.tcp);
 
-// const c = struct {
-//     pub usingnamespace @cImport("netinet/in.h");
-//     pub usingnamespace @cImport("sys/types.h");
-//     pub usingnamespace @cImport("sys/socket.h");
-//     pub usingnamespace @cImport("unistd.h");
-// };
-
-// const c = switch (builtin.target.os.tag) {
-//     .windows => @cImport({
-//         @cInclude("winsock2.h");
-//     }),
-//     // .linux => @cImport({
-//     //     @cInclude("unistd.h");
-//     //     @cInclude("arpa/inet.h");
-//     //     @cInclude("sys/socket.h"); // socket, bind, listen, accept, AF_INET, SOCK_STREAM
-//     //     const SOCKET: type = c_int;
-//     //     @cDefine("INVALID_SOCKET -1");
-
-//     // }),
-//     else => @compileError("Not implemented"),
-// };
-
 pub const TCPHeader = packed struct {
     /// Identifies the sending port.
     sourcePort: u16,
@@ -90,6 +68,11 @@ pub const TCPListener = switch (builtin.target.os.tag) {
     else => @compileError("Not implemented"),
 };
 
+pub const TCPConnection = switch (builtin.target.os.tag) {
+    .windows => WindowsTCPListener.WindowsTCPConnection,
+    else => @compileError("Not implemented"),
+};
+
 pub const WindowsTCPListener = struct {
     // based on https://heyulong3d.medium.com/network-programming-simple-hello-world-tcp-in-c-c-on-windows-and-unix-539d5f47733e
     const ws2_32 = std.os.windows.ws2_32;
@@ -133,23 +116,36 @@ pub const WindowsTCPListener = struct {
         }
     };
 
-    pub const WindowsTCPStream = struct {
+    pub const WindowsTCPConnection = struct {
         socket: ws2_32.SOCKET,
+        address: ws2_32.sockaddr.in,
 
-        pub fn read(self: *const WindowsTCPStream, buf: []const u8) !usize {
-            const result = ws2_32.recv(self.socket, buf.ptr, buf.len, 0);
-            if (result == ws2_32.SOCKET_ERROR) return GetLastWinsockError();
-            return result;
+        pub const Reader = std.io.Reader(WindowsTCPConnection, anyerror, read);
+        pub const Writer = std.io.Writer(WindowsTCPConnection, anyerror, write);
+
+        pub fn reader(self: WindowsTCPConnection) Reader {
+            return .{ .context = self };
+        }
+        pub fn writer(self: WindowsTCPConnection) Writer {
+            return .{ .context = self };
         }
 
-        pub fn write(self: *const WindowsTCPStream, buf: []u8) !usize {
-            const result = ws2_32.send(self.socket, buf.ptr, buf.len, 0);
+        pub fn read(self: WindowsTCPConnection, buf: []u8) anyerror!usize {
+            std.debug.assert(buf.len < std.math.maxInt(i32));
+            const result = ws2_32.recv(self.socket, buf.ptr, @intCast(buf.len), 0);
             if (result == ws2_32.SOCKET_ERROR) return GetLastWinsockError();
-            return result;
+            return @intCast(result);
         }
-
-        pub fn close(self: *const WindowsTCPStream) !void {
-            const result = ws2_32.closesocket(self.socket);
+        pub fn write(self: WindowsTCPConnection, buf: []const u8) anyerror!usize {
+            std.debug.assert(buf.len < std.math.maxInt(i32));
+            const result = ws2_32.send(self.socket, buf.ptr, @intCast(buf.len), 0);
+            if (result == ws2_32.SOCKET_ERROR) return GetLastWinsockError();
+            return @intCast(result);
+        }
+        pub fn close(self: *const WindowsTCPConnection) !void {
+            var result: i32 = ws2_32.shutdown(self.socket, ws2_32.SD_BOTH);
+            if (result == ws2_32.SOCKET_ERROR) return GetLastWinsockError();
+            result = ws2_32.closesocket(self.socket);
             if (result == ws2_32.SOCKET_ERROR) return GetLastWinsockError();
         }
     };
@@ -168,13 +164,21 @@ pub const WindowsTCPListener = struct {
         }
     }
 
-    address: ws2_32.sockaddr = undefined,
+    address: ws2_32.sockaddr.in = undefined,
     socket: ws2_32.SOCKET = undefined,
 
     fn adress_string(addr: *const ws2_32.sockaddr) []const u8 {
-        return switch (addr.sin_family) {
-            @as(@TypeOf(addr.sin_family), @intFromEnum(ws2_32.AF.INET)) => @panic("Not yet implemented"),
-            @as(@TypeOf(addr.sin_family), @intFromEnum(ws2_32.AF.INET6)) => @panic("Not yet implemented"),
+        return switch (addr.family) {
+            @as(@TypeOf(addr.family), ws2_32.AF.INET) => {
+                const asIn: ws2_32.sockaddr.in = @bitCast(addr.*);
+                const bytes = std.mem.toBytes(asIn.addr);
+                var buf: [15]u8 = std.mem.zeroes([15]u8);
+                return std.fmt.bufPrint(buf[0..], "{d}.{d}.{d}.{d}", .{ bytes[0], bytes[1], bytes[2], bytes[3] }) catch |err| {
+                    log.err("{any}{any}", .{ err, @errorReturnTrace() });
+                    return buf[0..];
+                };
+            },
+            @as(@TypeOf(addr.family), ws2_32.AF.INET6) => @panic("Not yet implemented"),
             else => unreachable,
         };
     }
@@ -182,11 +186,13 @@ pub const WindowsTCPListener = struct {
         try WindowsTCPListener.preinit();
 
         var r: WindowsTCPListener = .{};
-        r.address.sin_family = @intFromEnum(ws2_32.AF.INET);
-        r.address.sin_addr = @bitCast(addr);
-        r.address.sin_port = ws2_32.htons(@intCast(port));
-        r.socket = ws2_32.socket(@intFromEnum(ws2_32.AF.INET), ws2_32.SOCK.STREAM, 0);
-        log.debug("new IPv4 TCPListener:\n\taddr: {s}, port: {d}", .{ adress_string(&r.address), ws2_32.ntohs(r.address.sin_port) });
+        r.address = ws2_32.sockaddr.in{
+            .addr = addr,
+            .family = ws2_32.AF.INET,
+            .port = ws2_32.htons(port),
+        };
+        r.socket = ws2_32.socket(@intCast(ws2_32.AF.INET), ws2_32.SOCK.STREAM, ws2_32.IPPROTO.TCP);
+        log.debug("new IPv4 TCPListener:\n\taddr: {s}, port: {d}", .{ adress_string(@ptrCast(&r.address)), ws2_32.ntohs(r.address.port) });
         return r;
     }
     pub fn initIPv6(addr: u128, port: u16) !WindowsTCPListener {
@@ -200,15 +206,16 @@ pub const WindowsTCPListener = struct {
             .IPv6 => return try initIPv6(addr.IPv6, port),
         };
     }
-    pub fn deinit(self: *WindowsTCPListener) !void {
+    pub fn deinit(self: *WindowsTCPListener) void {
         const result = ws2_32.closesocket(self.socket);
-        if (result == ws2_32.SOCKET_ERROR) return GetLastWinsockError();
+        if (result == ws2_32.SOCKET_ERROR) {
+            const err = GetLastWinsockError();
+            log.err("{any}{any}", .{ err, @errorReturnTrace() });
+        }
     }
 
     pub fn bind(self: *WindowsTCPListener) !void {
-        const addr_ptr: [*]ws2_32.SOCKET_ADDRESS = @ptrFromInt(@intFromPtr(&self.address));
-        const bind_result = ws2_32.bind(self.socket, addr_ptr, @sizeOf(@TypeOf(self.address)));
-        log.debug("{any}", .{self});
+        const bind_result = ws2_32.bind(self.socket, @ptrCast(&self.address), @sizeOf(@TypeOf(self.address)));
         if (bind_result == ws2_32.SOCKET_ERROR) return GetLastWinsockError();
     }
 
@@ -217,13 +224,14 @@ pub const WindowsTCPListener = struct {
         if (listen_result == ws2_32.SOCKET_ERROR) return GetLastWinsockError();
     }
 
-    pub fn accept(self: *WindowsTCPListener) !WindowsTCPStream {
-        var r: WindowsTCPStream = .{
+    pub fn accept(self: *WindowsTCPListener) !WindowsTCPConnection {
+        var r: WindowsTCPConnection = .{
             .socket = undefined,
+            .address = undefined,
         };
-        const addr_ptr: *ws2_32.SOCKET_ADDRESS = @ptrCast(&self.address);
-        r.socket = ws2_32.accept(self.socket, addr_ptr, @sizeOf(ws2_32.SOCKET_ADDRESS));
-        if (r.socket == ws2_32.SOCKET_ERROR) return GetLastWinsockError();
+        var sz_clnt_addr: i32 = @sizeOf(@TypeOf(r.address));
+        r.socket = ws2_32.accept(self.socket, @ptrCast(&r.address), &sz_clnt_addr);
+        if (r.socket == ws2_32.INVALID_SOCKET) return GetLastWinsockError();
         return r;
     }
 };

@@ -2,15 +2,18 @@ const builtin = @import("builtin");
 const std = @import("std");
 const bytesToValue = std.mem.bytesToValue;
 
+const tcp = @import("tcp.zig");
+const TCPListener = tcp.TCPListener;
+const TCPConnection = tcp.TCPConnection;
+
 const sso = @import("sso.zig");
 const SSO = sso.SSO;
 const SSOMap = sso.SSOMap;
 
 const utils = @import("utils.zig");
-const VTableWriter = utils.io.VTableWriter;
 
-const offsetNs = @import("offset.zig");
-usingnamespace offsetNs;
+// const offsetNs = @import("offset.zig");
+// usingnamespace offsetNs;
 
 const DateTime = @import("dateTime.zig");
 
@@ -43,11 +46,11 @@ pub fn HttpContext(comptime settings: HttpContextOptions) type {
         const Response = HttpResponse(settings.response);
 
         allocator: std.mem.Allocator,
-        connection: std.net.Server.Connection,
+        connection: TCPConnection,
         request: Request,
         response: Response,
 
-        pub fn init(allocator: std.mem.Allocator, connection: std.net.Server.Connection) !Context {
+        pub fn init(allocator: std.mem.Allocator, connection: TCPConnection) !Context {
             const start = std.time.nanoTimestamp();
             var result: Context = Context{
                 .allocator = allocator,
@@ -56,7 +59,7 @@ pub fn HttpContext(comptime settings: HttpContextOptions) type {
                 .response = undefined,
             };
             errdefer result.deinit();
-            result.request = try Request.init(result.allocator, connection.stream);
+            result.request = try Request.init(result.allocator, connection);
             result.response = try Response.init(result.allocator);
 
             const duration_ns = std.time.nanoTimestamp() - start;
@@ -155,7 +158,7 @@ pub fn HttpRequest(comptime settings: HttpRequestOptions) type {
         /// Minimum length of the request line (excluding the \r\n at the end)
         const RequestLineMinLen: comptime_int = MethodMinLen + 1 + PathMinLen + 1 + VersionMinLen;
 
-        pub fn init(allocator: std.mem.Allocator, stream: std.net.Stream) !HttpRequest(settings) {
+        pub fn init(allocator: std.mem.Allocator, stream: TCPConnection) !HttpRequest(settings) {
             const start = std.time.nanoTimestamp();
             var result: HttpRequest(settings) = (&EmptyRequest).*;
             var buffer: [settings.max_headers_size]u8 = undefined;
@@ -255,21 +258,6 @@ pub fn HttpRequest(comptime settings: HttpRequestOptions) type {
         /// Returns the Http Header Field with the specified key if found
         pub inline fn getField(self: *const HttpRequest(settings), key: []const u8) ?HttpHeaderField {
             return find_field(self.rawFields, key);
-        }
-
-        test init {
-            const allocator = std.testing.allocator;
-
-            const http_post = @embedFile("testdata/post.txt");
-            var stream = std.io.fixedBufferStream(http_post);
-            const reader = stream.reader();
-            var request: HttpRequest(settings) = try HttpRequest(settings).init(reader, allocator);
-            defer request.deinit(allocator);
-
-            try std.testing.expectEqualStrings("POST", request.method);
-            try std.testing.expectEqualStrings("/index.html", request.path);
-            try std.testing.expectEqualStrings("HTTP/1.1", request.version);
-            try std.testing.expectEqualStrings("DATADATADATADATADATADATADATADATA", request.body);
         }
     };
 }
@@ -394,21 +382,31 @@ pub fn HttpResponse(comptime opt: HttpResponseOptions) type {
 
             try self.setHeader(key[0..], value[0..]);
         }
+        /// sets the Content-Length header field to match self.body.len
+        pub fn ensureContentLength(self: *Self) !void {
+            var buf: [16]u8 = undefined;
+            var contentLength: usize = 0;
+            if (self.body != null) contentLength = self.body.?.len;
+            // TODO this is probably a very slow way to do this, but utils.strings.fastUintToString is not ready yet
+            const str = try std.fmt.bufPrint(&buf, "{d}", .{contentLength});
+            try self.setHeader("Content-Length", str);
+        }
 
-        fn writeHeaderFields(self: *const Self, writer: std.net.Stream.Writer) !void {
+        fn writeHeaderFields(self: *const Self, writer: TCPConnection.Writer) !void {
             var iter = self.headers.iterator();
             while (iter.next()) |entry| {
                 try std.fmt.format(writer, "{s}: {s}\r\n", .{ entry.key_ptr.*, entry.value_ptr.* });
             }
         }
-        fn writeStatusLine(self: *const Self, writer: std.net.Stream.Writer) !void {
+        fn writeStatusLine(self: *const Self, writer: TCPConnection.Writer) !void {
             try std.fmt.format(writer, "{s} {d} {s}\r\n", .{ versionString, @intFromEnum(self.statusCode), @tagName(self.statusCode) });
         }
-        pub fn send(self: *Self, stream: std.net.Stream) !void {
+        pub fn send(self: *Self, stream: TCPConnection) !void {
             const start = std.time.nanoTimestamp();
-            var writer: std.net.Stream.Writer = stream.writer();
+            var writer = stream.writer();
             try self.writeStatusLine(writer);
             try self.setDateHeader();
+            try self.ensureContentLength();
             try self.writeHeaderFields(writer);
             if (self.body != null) {
                 _ = try writer.write("\r\n"[0..]);

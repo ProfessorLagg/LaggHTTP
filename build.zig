@@ -29,8 +29,8 @@ pub fn build(b: *std.Build) void {
         .linkage = .static,
         .name = "LaggHTTP",
         .root_module = lib_mod,
-        .use_llvm = true,
     });
+
     b.installArtifact(lib);
 
     const debugger = b.addExecutable(.{

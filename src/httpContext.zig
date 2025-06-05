@@ -113,11 +113,11 @@ pub fn HttpRequest(comptime settings: HttpRequestOptions) type {
         body: ?[]const u8 = null,
 
         fn find_field(fields: []const u8, key: []const u8) ?HttpHeaderField {
-            const start: usize = utils.Strings.indexOf(fields, key) orelse return null;
+            const start: usize = utils.strings.indexOf(fields, key) orelse return null;
             var slice = fields[start..];
-            const end: usize = utils.Strings.indexOf(slice, "\r\n") orelse slice.len;
+            const end: usize = utils.strings.indexOf(slice, "\r\n") orelse slice.len;
             slice = slice[0..end];
-            const splitIndex: usize = utils.Strings.indexOf(slice, ": ") orelse return null;
+            const splitIndex: usize = utils.strings.indexOf(slice, ": ") orelse return null;
             return HttpHeaderField{
                 .key = slice[0..splitIndex],
                 .val = slice[splitIndex + 2 ..],

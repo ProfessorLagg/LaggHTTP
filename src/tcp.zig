@@ -1,6 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const utils = @import("utils.zig");
+const log = std.log.scoped(.tcp);
 
 // const c = struct {
 //     pub usingnamespace @cImport("netinet/in.h");
@@ -9,21 +10,20 @@ const utils = @import("utils.zig");
 //     pub usingnamespace @cImport("unistd.h");
 // };
 
-// based on https://heyulong3d.medium.com/network-programming-simple-hello-world-tcp-in-c-c-on-windows-and-unix-539d5f47733e
-const c = switch (builtin.target.os.tag) {
-    .windows => @cImport({
-        @cInclude("winsock2.h");
-    }),
-    // .linux => @cImport({
-    //     @cInclude("unistd.h");
-    //     @cInclude("arpa/inet.h");
-    //     @cInclude("sys/socket.h"); // socket, bind, listen, accept, AF_INET, SOCK_STREAM
-    //     const SOCKET: type = c_int;
-    //     @cDefine("INVALID_SOCKET -1");
+// const c = switch (builtin.target.os.tag) {
+//     .windows => @cImport({
+//         @cInclude("winsock2.h");
+//     }),
+//     // .linux => @cImport({
+//     //     @cInclude("unistd.h");
+//     //     @cInclude("arpa/inet.h");
+//     //     @cInclude("sys/socket.h"); // socket, bind, listen, accept, AF_INET, SOCK_STREAM
+//     //     const SOCKET: type = c_int;
+//     //     @cDefine("INVALID_SOCKET -1");
 
-    // }),
-    else => @compileError("Not implemented"),
-};
+//     // }),
+//     else => @compileError("Not implemented"),
+// };
 
 pub const TCPHeader = packed struct {
     /// Identifies the sending port.
@@ -76,13 +76,13 @@ pub const TCPOptions = packed struct {
     // TODO Actually parse these
 
     /// Just here so the size matches
-    temp: [40]u8 = undefined,
+    temp: u320 = undefined,
 };
 
 pub const TCPFrame = packed struct {
     header: TCPHeader,
     options: TCPOptions,
-    data: []const u8,
+    data: utils.PackedSlice(u8),
 };
 
 pub const TCPListener = switch (builtin.target.os.tag) {
@@ -90,88 +90,109 @@ pub const TCPListener = switch (builtin.target.os.tag) {
     else => @compileError("Not implemented"),
 };
 
-const WindowsTCPListener = struct {
-    const WindowsTCPListenerError = error{
-        // See https://learn.microsoft.com/en-us/windows/win32/winsock/windows-sockets-error-codes-2
-
-        /// The underlying network subsystem is not ready for network communication.
-        WSASYSNOTREADY,
-        /// The version of Windows Sockets support requested is not provided by this particular Windows Sockets implementation.
-        WSAVERNOTSUPPORTED,
-        /// A blocking Windows Sockets 1.1 operation is in progress.
-        WSAEINPROGRESS,
-        /// A limit on the number of tasks supported by the Windows Sockets implementation has been reached.
-        WSAEPROCLIM,
-        /// The lpWSAData parameter is not a valid pointer.
-        WSAEFAULT,
-
-        /// The socket returned by c.socket function was invalid
-        InvalidSocket,
-
-        /// c.bind function returned SOCKET_ERROR
-        BindFailed,
-
-        /// c.listen function returned SOCKET_ERROR
-        ListenFailed,
-    };
-
+pub const WindowsTCPListener = struct {
+    // based on https://heyulong3d.medium.com/network-programming-simple-hello-world-tcp-in-c-c-on-windows-and-unix-539d5f47733e
+    const ws2_32 = std.os.windows.ws2_32;
     comptime {
         if (builtin.target.os.tag != .windows) @compileError("Only works on windows");
     }
 
-    fn preinit() !void {
-        if (!wsaDataLoaded) {
-            switch (c.WSAStartup(c.MAKEWORD(2, 2), &wsaData)) {
-                0 => {
-                    wsaDataLoaded = true;
-                    return void;
-                },
-                c.WSASYSNOTREADY => return WindowsTCPListenerError.WSASYSNOTREADY,
-                c.WSAVERNOTSUPPORTED => return WindowsTCPListenerError.WSAVERNOTSUPPORTED,
-                c.WSAEINPROGRESS => return WindowsTCPListenerError.WSAEINPROGRESS,
-                c.WSAEPROCLIM => return WindowsTCPListenerError.WSAEPROCLIM,
-                c.WSAEFAULT => return WindowsTCPListenerError.WSAEFAULT,
-            }
-        }
+    inline fn GetLastWinsockError() anyerror {
+        return utils.meta.EnumValueToError(ws2_32.WinsockError, ws2_32.WSAGetLastError());
     }
+    const WindowsTCPListenerError = error{
+        /// The socket returned by c.socket function was invalid
+        invalidSocket,
+
+        /// c.bind function returned SOCKET_ERROR
+        bindFailed,
+
+        /// c.listen function returned SOCKET_ERROR
+        listenFailed,
+
+        /// accept function returned SOCKET_ERROR
+        acceptFailed,
+    };
 
     pub const IpAddressFamily = enum(c_int) {
         /// The Internet Protocol version 4 (IPv4) address family
-        IPv4 = c.AF_INET,
+        IPv4 = ws2_32.AF.INET,
         /// The Internet Protocol version 6 (IPv4) address family
-        IPv6 = c.AF_INET6,
+        IPv6 = ws2_32.AF.INET6,
     };
     pub const IpAddress = union(IpAddressFamily) {
         IPv4: u32,
         IPv6: u128,
 
         pub fn initIPv4(bytes: [4]u8) IpAddress {
-            return IpAddress{ .IPv4 = std.mem.bytesToValue(u32, bytes) };
+            return IpAddress{ .IPv4 = std.mem.bytesToValue(u32, bytes[0..]) };
         }
 
         pub fn initIPv6(bytes: [16]u8) IpAddress {
-            return IpAddress{ .IPv6 = std.mem.bytesToValue(u128, bytes) };
+            return IpAddress{ .IPv6 = std.mem.bytesToValue(u128, bytes[0..]) };
         }
     };
 
-    var wsaData: c.WSADATA = undefined;
+    pub const WindowsTCPStream = struct {
+        socket: ws2_32.SOCKET,
+
+        pub fn read(self: *const WindowsTCPStream, buf: []const u8) !usize {
+            const result = ws2_32.recv(self.socket, buf.ptr, buf.len, 0);
+            if (result == ws2_32.SOCKET_ERROR) return GetLastWinsockError();
+            return result;
+        }
+
+        pub fn write(self: *const WindowsTCPStream, buf: []u8) !usize {
+            const result = ws2_32.send(self.socket, buf.ptr, buf.len, 0);
+            if (result == ws2_32.SOCKET_ERROR) return GetLastWinsockError();
+            return result;
+        }
+
+        pub fn close(self: *const WindowsTCPStream) !void {
+            const result = ws2_32.closesocket(self.socket);
+            if (result == ws2_32.SOCKET_ERROR) return GetLastWinsockError();
+        }
+    };
+
+    var wsaData: ws2_32.WSADATA = undefined;
     var wsaDataLoaded: bool = false;
+    fn preinit() !void {
+        if (wsaDataLoaded) return;
+        const WSAStartup_result = ws2_32.WSAStartup(0x202, &wsaData);
+        switch (WSAStartup_result) {
+            0 => wsaDataLoaded = true,
+            else => {
+                ws2_32.WSASetLastError(WSAStartup_result);
+                return GetLastWinsockError();
+            },
+        }
+    }
 
-    serv_addr: c.SOCKADDR_IN = undefined,
-    serv_socket: c.SOCKET = undefined,
+    address: ws2_32.sockaddr = undefined,
+    socket: ws2_32.SOCKET = undefined,
 
+    fn adress_string(addr: *const ws2_32.sockaddr) []const u8 {
+        return switch (addr.sin_family) {
+            @as(@TypeOf(addr.sin_family), @intFromEnum(ws2_32.AF.INET)) => @panic("Not yet implemented"),
+            @as(@TypeOf(addr.sin_family), @intFromEnum(ws2_32.AF.INET6)) => @panic("Not yet implemented"),
+            else => unreachable,
+        };
+    }
     pub fn initIPv4(addr: u32, port: u16) !WindowsTCPListener {
         try WindowsTCPListener.preinit();
 
         var r: WindowsTCPListener = .{};
-        r.serv_addr.sin_family = @intFromEnum(IpAddressFamily.IPv4);
-        r.serv_addr.sin_addr.s_addr = c.htonl(addr);
-        r.serv_addr.sin_port = c.htons(@intCast(port));
+        r.address.sin_family = @intFromEnum(ws2_32.AF.INET);
+        r.address.sin_addr = @bitCast(addr);
+        r.address.sin_port = ws2_32.htons(@intCast(port));
+        r.socket = ws2_32.socket(@intFromEnum(ws2_32.AF.INET), ws2_32.SOCK.STREAM, 0);
+        log.debug("new IPv4 TCPListener:\n\taddr: {s}, port: {d}", .{ adress_string(&r.address), ws2_32.ntohs(r.address.sin_port) });
+        return r;
     }
     pub fn initIPv6(addr: u128, port: u16) !WindowsTCPListener {
         _ = &addr;
         _ = &port;
-        @compileError("Not yet Implemented");
+        return utils.UtilError.NotYetImplemented;
     }
     pub fn init(addr: IpAddress, port: u16) !WindowsTCPListener {
         return switch (addr) {
@@ -179,28 +200,30 @@ const WindowsTCPListener = struct {
             .IPv6 => return try initIPv6(addr.IPv6, port),
         };
     }
-    pub fn deinit(self: *WindowsTCPListener) void {
-        c.closesocket(self.serv_socket);
-
+    pub fn deinit(self: *WindowsTCPListener) !void {
+        const result = ws2_32.closesocket(self.socket);
+        if (result == ws2_32.SOCKET_ERROR) return GetLastWinsockError();
     }
 
     pub fn bind(self: *WindowsTCPListener) !void {
-        const addr_ptr: *c.SOCKADDR = @ptrCast(&self.serv_addr);
-        const bind_result = c.bind(self.serv_sock, addr_ptr, @sizeOf(c.SOCKADDR_IN));
-        if (bind_result == c.SOCKET_ERROR) {
-            return WindowsTCPListenerError.BindFailed;
-        }
+        const addr_ptr: [*]ws2_32.SOCKET_ADDRESS = @ptrFromInt(@intFromPtr(&self.address));
+        const bind_result = ws2_32.bind(self.socket, addr_ptr, @sizeOf(@TypeOf(self.address)));
+        log.debug("{any}", .{self});
+        if (bind_result == ws2_32.SOCKET_ERROR) return GetLastWinsockError();
     }
 
     pub fn listen(self: *WindowsTCPListener) !void {
-        // try self.bind();
-        const listen_result = c.listen(self.serv_socket, c.SOMAXCONN);
-        if (listen_result == c.SOCKET_ERROR) return WindowsTCPListenerError.ListenFailed;
+        const listen_result = ws2_32.listen(self.socket, ws2_32.SOMAXCONN);
+        if (listen_result == ws2_32.SOCKET_ERROR) return GetLastWinsockError();
     }
 
-    pub fn accept(self: *WindowsTCPListener) !TCPFrame {
-        // TODO
-        _ = self;
-        @compileError("Not yet implemented");
+    pub fn accept(self: *WindowsTCPListener) !WindowsTCPStream {
+        var r: WindowsTCPStream = .{
+            .socket = undefined,
+        };
+        const addr_ptr: *ws2_32.SOCKET_ADDRESS = @ptrCast(&self.address);
+        r.socket = ws2_32.accept(self.socket, addr_ptr, @sizeOf(ws2_32.SOCKET_ADDRESS));
+        if (r.socket == ws2_32.SOCKET_ERROR) return GetLastWinsockError();
+        return r;
     }
 };

@@ -100,6 +100,14 @@ pub const mem = struct {
             arr_ptr.* = new_arr[0..];
         }
     }
+
+    pub fn c_string_to_slice(c_string: [*]const u8) []const u8 {
+        var r: []const u8 = undefined;
+        r.ptr = c_string;
+        r.len = 0;
+        while (c_string[r.len] != 0) : (r.len += 1) {}
+        return r;
+    }
 };
 
 pub const meta = struct {
@@ -141,6 +149,37 @@ pub const meta = struct {
             }
             return @Type(std.builtin.Type{ .error_set = err_fields[0..] });
         }
+    }
+    fn EnumErrorMapVal(comptime T: type) type {
+        return struct {
+            @"enum": T,
+            @"error": anyerror,
+        };
+    }
+    fn get_enum_err_mapping(comptime T: type, comptime Ti: std.builtin.Type.Enum) [Ti.fields.len]EnumErrorMapVal(T) {
+        comptime {
+            @setEvalBranchQuota(1024 * 1024 * 1024);
+            var arr: [Ti.fields.len]EnumErrorMapVal(T) = undefined;
+            for (0..Ti.fields.len) |i| {
+                arr[i] = .{
+                    .@"enum" = @field(T, Ti.fields[i].name),
+                    .@"error" = @field(EnumErrorSet(T), Ti.fields[i].name),
+                };
+            }
+            return arr;
+        }
+    }
+    pub inline fn EnumValueToError(comptime T: type, enum_value: T) anyerror {
+        const Ti: std.builtin.Type = comptime @typeInfo(T);
+        comptime if (Ti != .@"enum") @compileError("Expected enum type, but found: " ++ @typeName(T));
+        const enum_err_mapping = comptime get_enum_err_mapping(T, Ti.@"enum");
+
+        for (enum_err_mapping[0..]) |mapping| {
+            const en = mapping.@"enum";
+            const er = mapping.@"error";
+            if (enum_value == en) return er;
+        }
+        unreachable;
     }
 };
 

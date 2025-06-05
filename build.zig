@@ -13,13 +13,15 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .single_threaded = true,
-        .omit_frame_pointer = optimize == .ReleaseFast
+        .omit_frame_pointer = false,
     });
 
     const debugger_mod = b.createModule(.{
         .root_source_file = b.path("src/_debugger.zig"),
         .target = target,
         .optimize = optimize,
+        .single_threaded = true,
+        .omit_frame_pointer = false,
         .link_libc = true,
     });
     debugger_mod.addImport("LaggHTTP", lib_mod);
@@ -29,6 +31,7 @@ pub fn build(b: *std.Build) void {
         .linkage = .static,
         .name = "LaggHTTP",
         .root_module = lib_mod,
+        .use_llvm = true,
     });
 
     b.installArtifact(lib);

@@ -387,8 +387,7 @@ pub fn HttpResponse(comptime opt: HttpResponseOptions) type {
             var buf: [16]u8 = undefined;
             var contentLength: usize = 0;
             if (self.body != null) contentLength = self.body.?.len;
-            // TODO this is probably a very slow way to do this, but utils.strings.fastUintToString is not ready yet
-            const str = try std.fmt.bufPrint(&buf, "{d}", .{contentLength});
+            const str = utils.strings.fastIntToString(@TypeOf(contentLength), contentLength, &buf);
             try self.setHeader("Content-Length", str);
         }
 

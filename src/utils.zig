@@ -89,51 +89,44 @@ pub const strings = struct {
         }
     }
 
-    /// Convert signed integer to base 10 utf-8 string
-    pub fn fastIntToString(comptime T: type, num: T) []const u8 {
-        // TODO
-        _ = num;
-        @compileError("Not yet implemented");
-    }
-
-    /// Convert unsigned integer to base 10 utf-8 string
-    pub fn fastUIntToString(comptime T: type, num: T) []const u8 {
+    /// Converts integer to base 10 utf-8 string
+    pub fn fastIntToString(comptime T: type, num: T, buffer: []u8) []const u8 {
+        const Ti = comptime @typeInfo(T);
         comptime {
-            const Ti = @typeInfo(T);
-            const errmsg = "Expected unsigned integer type, but found " ++ @typeName(T);
+            const errmsg = "Expected integer type, but found " ++ @typeName(T);
             if (Ti != .int) {
                 @compileLog(errmsg);
                 unreachable;
             }
-            if (Ti.int.signedness != .unsigned) {
-                @compileLog(errmsg);
-                unreachable;
-            }
         }
-        const max_result_len: usize = comptime math.log10_int_ceil(usize, @intCast(std.math.maxInt(T)));
+        var n = @abs(num);
+        if (n == 0) {
+            buffer[0] = '0';
+            return buffer[0..1];
+        }
+        var i: usize = buffer.len;
+        while (n > 0) {
+            i -= 1;
+            buffer[i] = @intCast((n % 10) + 48);
+            n = n / 10;
+        }
+        const negativeInt: u8 = @intFromBool(num < 0);
+        const positiveInt: u8 = @intFromBool(num >= 0);
+        i -= negativeInt;
+        buffer[i] = ('-' * negativeInt) + (buffer[i] * positiveInt);
 
-        if (num == 0) return "0";
-        var result: [max_result_len]u8 = undefined;
-        var n: T = num;
-        var i: usize = 0;
-        while (true) {
-            result[i] = @as(u8, @intCast((@rem(n, 10)))) + 48;
-            i += 1;
-            n = @divFloor(n, 10);
-            if (n == 0) break;
-        }
-        std.mem.reverse(u8, result[0..i]);
-        return result[0..i];
+        return buffer[i..];
     }
 
-    test fastUIntToString {
-        var buf: [16]u8 = undefined;
-        var i: usize = 1_000_000;
-        while (i >= 0) : (i -= 1) {
-            const expect = try std.fmt.bufPrint(&buf, "{d}", .{i});
-            const found = fastUIntToString(usize, i);
+    test fastIntToString {
+        var buf_e: [16]u8 = undefined;
+        var buf_f: [16]u8 = undefined;
+        var i: isize = 99;
+        while (i > -99) : (i -= 1) {
+            const expect = try std.fmt.bufPrint(&buf_e, "{d}", .{i});
+            const found = fastIntToString(@TypeOf(i), i, &buf_f);
             std.testing.expectEqualStrings(expect, found) catch |err| {
-                std.log.err("\ne:\"{s}\"\nf:\"{s}\"", .{ expect, found });
+                std.log.err("\n\te:\"{s}\"\n\tf:\"{s}\"", .{ expect, found });
                 return err;
             };
         }

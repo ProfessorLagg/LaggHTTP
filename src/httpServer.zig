@@ -17,8 +17,16 @@ pub const HttpServerOptions = struct {
     },
 };
 
+pub fn HttpRequestHandler(comptime opt: HttpServerOptions) type {
+    return struct {
+        canHandle: fn (*HttpContext(opt.ctx)) bool,
+        handle: fn (*HttpContext(opt.ctx)) anyerror!void,
+    };
+}
+
 pub fn HttpServer(comptime opt: HttpServerOptions) type {
     return struct {
+        /// returns true if the route
         const Self = @This();
 
         allocator: std.mem.Allocator,
@@ -53,7 +61,7 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
         }
         fn schedule(self: *Self, connection: tcp.TCPConnection) !void {
             const start = std.time.nanoTimestamp();
-            var ctx: HttpContext(opt.ctx) = try HttpContext(opt.ctx).init(self.allocator, connection);
+            var ctx: HttpContext = try HttpContext.init(opt.ctx, self.allocator, connection);
             ctx.response.statusCode = .NotFound;
             try ctx.response.send(connection);
             ctx.deinit();

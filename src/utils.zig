@@ -1,7 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
-pub const Strings = struct {
+pub const strings = struct {
     pub fn indexOf(str: []const u8, find: []const u8) ?usize {
         if (find.len > str.len) {
             @branchHint(.unlikely);
@@ -102,5 +102,58 @@ pub const mem = struct {
     }
 };
 
+pub const meta = struct {
+    pub fn printSize(comptime T: type) void {
+        const stdout = std.io.getStdOut().writer();
+        std.fmt.format(stdout, "size of {s} = {d}\n", .{ @typeName(T), @sizeOf(T) }) catch return;
+    }
+    pub fn printEnumTags(comptime T: type) void {
+        const Ti: std.builtin.Type = comptime @typeInfo(T);
+        comptime if (Ti != .@"enum") @compileError("Expected enum type, but found: " ++ @typeName(T));
+
+        const stdout = std.io.getStdOut().writer();
+        std.fmt.format(stdout, "fields in enum {s}:\n", .{@typeName(T)}) catch {};
+        inline for (Ti.@"enum".fields) |field| {
+            std.fmt.format(stdout, "\t{s} = {any}\n", .{ field.name, field.value }) catch {};
+        }
+    }
+    pub fn printErrorSet(comptime T: type) void {
+        const Ti: std.builtin.Type = comptime @typeInfo(T);
+        comptime if (Ti != .error_set) @compileError("Expected error_set type, but found: " ++ @typeName(T));
+
+        const stdout = std.io.getStdOut().writer();
+        std.fmt.format(stdout, "fields in error set:\n", .{}) catch {};
+        if (Ti.error_set == null) return;
+        const fields: []const std.builtin.Type.Error = Ti.error_set.?;
+        inline for (fields) |field| {
+            std.fmt.format(stdout, "\t{s}\n", .{field.name}) catch {};
+        }
+    }
+
+    pub fn EnumErrorSet(comptime T: type) type {
+        comptime {
+            const enum_Ti: std.builtin.Type = @typeInfo(T);
+            if (enum_Ti != .@"enum") @compileError("Expected enum type, but found: " ++ @typeName(T));
+            const enum_fields = enum_Ti.@"enum".fields;
+            var err_fields: [enum_fields.len]std.builtin.Type.Error = undefined;
+            for (0..enum_fields.len) |i| {
+                err_fields[i] = std.builtin.Type.Error{ .name = enum_fields[i].name };
+            }
+            return @Type(std.builtin.Type{ .error_set = err_fields[0..] });
+        }
+    }
+};
+
+pub const UtilError = error{
+    NotYetImplemented,
+};
+
+pub fn PackedSlice(comptime T: type) type {
+    return packed struct {
+        len: usize,
+        ptr: [*]T,
+    };
+}
+
 pub fn noop() void {}
-pub fn noop_err() anyerror!void{}
+pub fn noop_err() anyerror!void {}

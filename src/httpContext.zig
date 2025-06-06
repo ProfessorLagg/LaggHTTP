@@ -39,16 +39,14 @@ pub const HttpContextOptions = struct {
     request: HttpRequestOptions = .{},
 };
 pub const HttpContext = struct {
-    const Context = @This();
-
     allocator: std.mem.Allocator,
     connection: TCPConnection,
     request: HttpRequest,
     response: HttpResponse,
 
-    pub fn init(comptime settings: HttpContextOptions, allocator: std.mem.Allocator, connection: TCPConnection) !Context {
+    pub fn init(comptime settings: HttpContextOptions, allocator: std.mem.Allocator, connection: TCPConnection) !HttpContext {
         const start = std.time.nanoTimestamp();
-        var result: Context = Context{
+        var result: HttpContext = HttpContext{
             .allocator = allocator,
             .connection = connection,
             .request = undefined,
@@ -62,13 +60,16 @@ pub const HttpContext = struct {
         PerfLog.info("HttpContext.init took {d} ns", .{duration_ns});
         return result;
     }
-
-    pub fn deinit(self: *Context) void {
+    pub fn deinit(self: *HttpContext) void {
         const start = std.time.nanoTimestamp();
         self.request.deinit(self.allocator);
         self.response.deinit();
         const duration_ns = std.time.nanoTimestamp() - start;
         PerfLog.info("HttpContext.deinit took {d} ns", .{duration_ns});
+    }
+
+    pub fn send(self: *HttpContext) !void {
+        try self.response.send(self.connection);
     }
 };
 
@@ -318,6 +319,59 @@ pub const HttpStatusCode = enum(u16) {
     LoopDetected = 508,
     NotExtended = 510,
     NetworkAuthenticationRequired = 511,
+
+    pub inline fn value(self: HttpStatusCode) u16 {
+        return @intFromEnum(self);
+    }
+
+    pub inline fn name(self: HttpStatusCode) []const u8 {
+        return @tagName(self);
+    }
+
+    const validStatusCodeValues = blk: {
+        const fields = @typeInfo(HttpStatusCode).@"enum".fields;
+        var r: [fields.len]u16 = undefined;
+        for (0..fields.len) |i| {
+            r[i] = @as(u16, fields[i].value);
+        }
+        std.mem.sort(u16, &r, {}, std.sort.asc(u16));
+        break :blk r;
+    };
+    pub inline fn validValue(v: u16) bool {
+        const idx = utils.mem.binarySearch(u16, utils.mem.compareNumberAsc(u16), validStatusCodeValues[0..], v);
+        return idx != null;
+    }
+
+    /// Returns the HttpStatusCode with the specified value
+    /// Caller assserts that `v` is a valid HttpStatusCode
+    pub inline fn fromValue(v: u16) HttpStatusCode {
+        std.debug.assert(validValue(v));
+        return @as(HttpStatusCode, @enumFromInt(v));
+    }
+
+    pub const HttpStatusCodeCategory = enum(u16) {
+        /// Request was received, continuing process
+        Informational = 100,
+        /// Request was successfully received, understood, and accepted
+        Successful = 200,
+        /// Further action needs to be taken in order to complete the request
+        Redirection = 300,
+        /// Request contains bad syntax or cannot be fulfilled
+        ClientError = 400,
+        /// Server failed to fulfil an apparently valid request
+        ServerError = 500,
+    };
+
+    pub fn category(self: HttpStatusCode) HttpStatusCodeCategory {
+        const sv: u16 = self.value();
+        const cv: u16 = @divFloor(sv, 100) * 100;
+        return @enumFromInt(cv);
+    }
+
+    pub fn isError(self: HttpStatusCode) bool {
+        const c = self.category();
+        return c == .ClientError or c == .ServerError;
+    }
 };
 pub const HttpResponse = struct {
     const versionString = "HTTP/1.1";
@@ -402,6 +456,17 @@ pub const HttpResponse = struct {
         }
         const duration_ns = std.time.nanoTimestamp() - start;
         PerfLog.info("Sending response took {d} ns", .{duration_ns});
+    }
+};
+
+// === HANDLER ===
+/// Function that can handle requests. Must return false if the request cannot be handled
+pub const HttpRequestHandler = struct {
+    context: ?*anyopaque,
+    handleFn: *const fn (?*anyopaque, *HttpContext) anyerror!bool,
+
+    pub fn handle(self: *const HttpRequestHandler, http: *HttpContext) !bool {
+        return try self.handleFn(self.context, http);
     }
 };
 

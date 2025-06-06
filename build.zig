@@ -6,22 +6,21 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize: std.builtin.OptimizeMode = b.standardOptimizeOption(.{});
+    const single_threaded = true;
 
     // ===== MODULES =====
     const lib_mod = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
-        .single_threaded = true,
-        .omit_frame_pointer = false,
+        .single_threaded = single_threaded,
     });
 
     const debugger_mod = b.createModule(.{
         .root_source_file = b.path("src/_debugger.zig"),
         .target = target,
         .optimize = optimize,
-        .single_threaded = true,
-        .omit_frame_pointer = false,
+        .single_threaded = single_threaded,
         .link_libc = true,
     });
     debugger_mod.addImport("LaggHTTP", lib_mod);

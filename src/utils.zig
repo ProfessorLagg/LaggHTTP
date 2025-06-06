@@ -17,6 +17,41 @@ pub const math = struct {
     pub inline fn powi_panic(comptime T: type, x: T, y: T) T {
         return std.math.powi(T, x, y) catch |err| @panic(err);
     }
+
+    fn divCeil_uint(comptime T: type, x: T, y: T) T {
+        comptime meta.assertUnsignedInteger(T);
+        const floor: T = @divFloor(x, y);
+        const add: T = @intFromBool((floor * y) == x);
+        return floor + add;
+    }
+    fn divCeil_sint(comptime T: type, x: T, y: T) T {
+        comptime meta.assertSignedInteger(T);
+        const floor: T = @divFloor(x, y);
+        const add: T = @intFromBool((floor * y) == x);
+        return floor + add;
+    }
+    fn divCiel_float(comptime T: type, x: T, y: T) T {
+        comptime meta.assertFloat(T);
+        return @ceil(x / y);
+    }
+
+    fn divCiel_vecf(comptime T: type, x: T, y: T) T {
+        comptime meta.assertFloatVector(T);
+        return @ceil(x / y);
+    }
+    /// calculates x / y, rounding to the nearest whole number towards positive infinity
+    pub fn divCeil(comptime T: type, x: T, y: T) T {
+        const divFn = comptime blk: {
+            if (meta.isUnsignedInteger(T)) break :blk divCeil_uint;
+            if (meta.isSignedInteger(T)) break :blk divCeil_sint;
+            if (meta.isFloat(T)) break :blk divCiel_float;
+            if (meta.isTypedVector(T, meta.isFloat)) break :blk divCiel_vecf;
+            if (meta.isTypedVector(T, meta.isUnsignedInteger)) @compileError("Not yet implemented"); // TODO
+            if (meta.isTypedVector(T, meta.isSignedInteger)) @compileError("Not yet implemented"); // TODO
+            unreachable;
+        };
+        return @call(.always_inline, divFn, .{ T, x, y });
+    }
 };
 
 pub const strings = struct {
@@ -31,6 +66,11 @@ pub const strings = struct {
             slice.ptr += 1;
         }
         return null;
+    }
+    pub fn streql(a: []const u8, b: []const u8) bool {
+        if (a.len != b.len) return false;
+        for (0..a.len) |i| if (a[i] != b[i]) return false;
+        return true;
     }
 
     /// Converts base 10 utf-8 string to a signed integer
@@ -88,7 +128,6 @@ pub const strings = struct {
             i -= 1;
         }
     }
-
     /// Converts integer to base 10 utf-8 string
     pub fn fastIntToString(comptime T: type, num: T, buffer: []u8) []const u8 {
         const Ti = comptime @typeInfo(T);
@@ -170,6 +209,69 @@ pub const mem = struct {
         while (c_string[r.len] != 0) : (r.len += 1) {}
         return r;
     }
+
+    pub fn compareFromBools(lt: bool, gt: bool) i2 {
+        if (lt and gt) { // both cannot be true
+            @branchHint(.cold);
+            unreachable;
+        }
+        const lti: i2 = @as(i2, -1) * @as(i2, @intFromBool(lt));
+        const gti: i2 = @intFromBool(lt);
+        return lti + gti;
+    }
+    pub fn compareNumberAsc(comptime T: type) fn (a: T, b: T) i2 {
+        meta.assertNumber(T);
+        return struct {
+            fn f(a: T, b: T) i2 {
+                return compareFromBools(a < b, a > b);
+            }
+        }.f;
+    }
+    pub fn compareNumberDsc(comptime T: type) fn (a: T, b: T) i2 {
+        meta.assertNumber(T);
+        return struct {
+            fn f(a: T, b: T) i2 {
+                return compareFromBools(a > b, a < b);
+            }
+        }.f;
+    }
+
+    /// Finds the index of an item in the array using binary search.
+    /// Returns null if the item is not found
+    pub fn binarySearch(
+        comptime T: type,
+        /// comparison function. Must return the following:
+        /// - a < b return -1
+        /// - a = b return  0
+        /// - a > b return +1
+        comptime compareFn: fn (a: T, b: T) i2,
+        arr: []const T,
+        item: T,
+    ) ?usize {
+        if (arr.len == 0) {
+            @branchHint(.unlikely);
+            return null;
+        }
+
+        var L: isize = 0;
+        var R: isize = @as(isize, @intCast(arr.len)) - 1;
+        var mi: isize = undefined;
+        var mu: usize = undefined;
+        var cmp: i2 = undefined;
+        var gt: isize = undefined;
+        var le: isize = undefined;
+        while (L != R) {
+            mi = L + math.divCeil(isize, (R - L), 2);
+            mu = @abs(mi);
+            cmp = compareFn(arr[mu], item);
+            gt = @intFromBool(cmp == 1);
+            le = @intFromBool(cmp != 1);
+            R = (R * le) + ((mi - 1) * gt);
+            L = (mi * le) + (L * gt);
+        }
+        if (cmp == 0) return mu;
+        return null;
+    }
 };
 
 pub const meta = struct {
@@ -242,6 +344,84 @@ pub const meta = struct {
             if (enum_value == en) return er;
         }
         unreachable;
+    }
+
+    // Type Checks
+    pub fn isNumber(comptime T: type) bool {
+        comptime {
+            return isInteger(T) or isFloat(T);
+        }
+    }
+    pub fn assertNumber(comptime T: type) void {
+        comptime if (!isNumber(T)) unreachable;
+    }
+
+    pub fn isInteger(comptime T: type) bool {
+        comptime {
+            const ti: std.builtin.Type = @typeInfo(T);
+            return ti == .int;
+        }
+    }
+    pub fn assertInteger(comptime T: type) void {
+        comptime if (!isInteger(T)) unreachable;
+    }
+
+    pub fn isSignedInteger(comptime T: type) bool {
+        comptime {
+            const ti: std.builtin.Type = @typeInfo(T);
+            return ti == .int and ti.int.signedness == .signed;
+        }
+    }
+    pub fn assertSignedInteger(comptime T: type) void {
+        comptime if (!isSignedInteger(T)) unreachable;
+    }
+
+    pub fn isUnsignedInteger(comptime T: type) bool {
+        comptime {
+            const ti: std.builtin.Type = @typeInfo(T);
+            return ti == .int and ti.int.signedness == .unsigned;
+        }
+    }
+    pub fn assertUnsignedInteger(comptime T: type) void {
+        comptime if (!isUnsignedInteger(T)) unreachable;
+    }
+
+    pub fn isFloat(comptime T: type) bool {
+        comptime {
+            const ti: std.builtin.Type = @typeInfo(T);
+            return ti == .float;
+        }
+    }
+    pub fn assertFloat(comptime T: type) void {
+        comptime if (!isFloat(T)) unreachable;
+    }
+
+    pub fn isVector(comptime T: type) bool {
+        comptime {
+            const ti: std.builtin.Type = @typeInfo(T);
+            return ti == .vector;
+        }
+    }
+    pub fn assertVector(comptime T: type) bool {
+        comptime if (!isVector(T)) unreachable;
+    }
+
+    pub fn isTypedVector(
+        comptime T: type,
+        /// function that returns `true` if vector child type is valid, otherwise `false`
+        comptime typecheck: fn (comptime type) bool,
+    ) bool {
+        comptime {
+            const ti: std.builtin.Type = @typeInfo(T);
+            return ti == .vector and typecheck(ti.vector.child);
+        }
+    }
+    pub fn assertTypedVector(
+        comptime T: type,
+        /// function that returns `true` if vector child type is valid, otherwise `false`
+        comptime typecheck: fn (comptime type) bool,
+    ) bool {
+        comptime if (!isTypedVector(T, typecheck)) unreachable;
     }
 };
 

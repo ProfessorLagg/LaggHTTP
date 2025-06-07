@@ -164,7 +164,7 @@ fn logInternal(comptime level: std.log.Level, comptime scope: @Type(.enum_litera
         const file_writer = file.writer();
         // TODO escape whitespace
         nosuspend {
-            try std.fmt.format(file_writer, "{s}\t", .{timestamp_str});
+            try std.fmt.format(file_writer, "{s: >5}\t", .{timestamp_str});
             try std.fmt.format(file_writer, full_format, args);
         }
     }

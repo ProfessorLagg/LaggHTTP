@@ -30,7 +30,7 @@ pub fn build(b: *std.Build) void {
         .linkage = .static,
         .name = "LaggHTTP",
         .root_module = lib_mod,
-        .use_llvm = true,
+        // .use_llvm = true,
     });
 
     b.installArtifact(lib);
@@ -38,13 +38,14 @@ pub fn build(b: *std.Build) void {
     const debugger = b.addExecutable(.{
         .name = "LaggHTTP.Debugger",
         .root_module = debugger_mod,
-        .use_llvm = true,
+        // .use_llvm = true,
     });
     b.installArtifact(debugger);
 
     // ===== RUN =====
     const run_cmd = b.addRunArtifact(debugger);
     run_cmd.step.dependOn(b.getInstallStep());
+
     if (b.args) |args| run_cmd.addArgs(args);
 
     const run_step = b.step("run", "Run the app");

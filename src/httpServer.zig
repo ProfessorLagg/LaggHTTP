@@ -100,6 +100,7 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
         inline fn total_schedule_mean_time() f64 {
             return total_schedule_time / total_schedule_runs;
         }
+
         fn handleRequest(self: *Self, http: *HttpContext) !void {
             var i: usize = 0;
             var handled: bool = false;
@@ -110,16 +111,20 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
                     http.response.statusCode = HttpStatusCode.fromValue(503);
 
                     _ = self.errorHandler.handle(http) catch |inner_err| {
-                        std.log.err("Sending error response failed: {any}{any}", .{ inner_err, @errorReturnTrace() });
+                        log.err("Sending error response failed: {any}{any}", .{ inner_err, @errorReturnTrace() });
                     };
                 };
             }
             if (!handled) {
                 http.response.statusCode = HttpStatusCode.fromValue(404);
-                _ = try self.errorHandler.handle(http);
+                _ = self.errorHandler.handle(http) catch |inner_err| {
+                    log.err("Sending error response failed: {any}{any}", .{ inner_err, @errorReturnTrace() });
+                };
             }
             http.deinit();
-            try http.connection.close();
+            http.connection.close() catch |err| {
+                log.warn("error when closing http connection: {any}{any}", .{ err, @errorReturnTrace() });
+            };
         }
         fn schedule(self: *Self, connection: tcp.TCPConnection) !void {
             const start = std.time.nanoTimestamp();

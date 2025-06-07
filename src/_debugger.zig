@@ -7,11 +7,11 @@ pub const std_options: std.Options = .{
     .log_level = switch (builtin.mode) {
         .Debug => .debug,
         .ReleaseSafe => .debug,
-        .ReleaseSmall => .err,
-        .ReleaseFast => .err,
+        .ReleaseSmall => .warn,
+        .ReleaseFast => .warn,
     },
     .log_scope_levels = &[_]std.log.ScopeLevel{
-        .{ .scope = .HttpServer, .level = .err },
+        .{ .scope = .HttpServer, .level = .info },
         .{ .scope = .Perf, .level = .err },
         .{ .scope = .tcp, .level = .err },
     },
@@ -19,7 +19,10 @@ pub const std_options: std.Options = .{
 };
 
 pub fn main() !void {
-    try LaggHTTP.logging.setup(.{ .log_stdout = builtin.mode == .Debug });
+    try LaggHTTP.logging.setup(.{
+        .log_stdout = false,
+        .log_file = true,
+    });
     try debugHttpServer();
     // try debugStandardHttpServer();
     // try debugTCPListener();

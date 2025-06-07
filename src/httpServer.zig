@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const ThreadPool = std.Thread.Pool;
 
 const utils = @import("utils.zig");
 const tcp = @import("tcp.zig");
@@ -14,7 +15,7 @@ const HttpRequestHandler = httpContextNs.HttpRequestHandler;
 const HttpStatusCode = httpContextNs.HttpStatusCode;
 
 const log = std.log.scoped(.HttpServer);
-const perfLog = std.log.scoped(.Perf);
+const PerfLog = std.log.scoped(.Perf);
 
 pub const HttpServerOptions = struct {
     ctx: HttpContextOptions = .{},
@@ -101,7 +102,7 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
             return total_schedule_time / total_schedule_runs;
         }
 
-        fn handleRequest(self: *Self, http: *HttpContext) !void {
+        fn handleRequest(self: *const Self, http: *HttpContext) !void {
             var i: usize = 0;
             var handled: bool = false;
             while (!handled and i < opt.handlers.len) : (i += 1) {
@@ -126,17 +127,39 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
                 log.warn("error when closing http connection: {any}{any}", .{ err, @errorReturnTrace() });
             };
         }
-        fn schedule(self: *Self, connection: tcp.TCPConnection) !void {
+        fn handleRequestMultiThread(self: *const Self, connection: tcp.TCPConnection) void {
             const start = std.time.nanoTimestamp();
-            var ctx: HttpContext = try HttpContext.init(opt.ctx, self.allocator, connection);
+            var http: HttpContext = HttpContext.init(opt.ctx, self.allocator, connection) catch |err| {
+                @branchHint(.unlikely);
+                log.warn("{any}", .{err});
+                return;
+            };
+            var i: usize = 0;
+            var handled: bool = false;
+            while (!handled and i < opt.handlers.len) : (i += 1) {
+                handled = opt.handlers[i](&http) catch |outer_err| {
+                    // TODO handle client closed
+                    log.warn("Server error: {any}{any}", .{ outer_err, @errorReturnTrace() });
+                    http.response.statusCode = HttpStatusCode.fromValue(503);
 
-            // TODO this is not going to fly once i start multi threading
-            try self.handleRequest(&ctx);
+                    _ = self.errorHandler.handle(&http) catch |inner_err| {
+                        log.err("Sending error response failed: {any}{any}", .{ inner_err, @errorReturnTrace() });
+                    };
+                };
+            }
+            if (!handled) {
+                http.response.statusCode = HttpStatusCode.fromValue(404);
+                _ = self.errorHandler.handle(&http) catch |inner_err| {
+                    log.err("Sending error response failed: {any}{any}", .{ inner_err, @errorReturnTrace() });
+                };
+            }
+            http.deinit();
+            http.connection.close() catch |err| {
+                log.warn("error when closing http connection: {any}{any}", .{ err, @errorReturnTrace() });
+            };
 
             const duration_ns = std.time.nanoTimestamp() - start;
-            total_schedule_time += @floatFromInt(duration_ns);
-            total_schedule_runs += 1.0;
-            perfLog.info("HttpServer.schedule took {d} ns | mean: {d:.0}", .{ duration_ns, total_schedule_mean_time() });
+            PerfLog.info("HttpServer.handleRequestMultiThread;{d}", .{duration_ns});
         }
 
         pub fn listen(self: *Self) !void {
@@ -146,6 +169,18 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
             try listener.bind();
             try listener.listen();
 
+            var waitGroup: std.Thread.WaitGroup = .{};
+            var threadPool: ThreadPool = undefined;
+            try threadPool.init(.{
+                .allocator = self.allocator,
+                .n_jobs = try std.Thread.getCpuCount(),
+            });
+
+            defer {
+                waitGroup.finish();
+                threadPool.deinit();
+            }
+
             log.info("HttpServer listening on address {any}", .{self.address});
             self.shouldRun.set();
             while (self.shouldRun.isSet()) {
@@ -154,11 +189,8 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
                     log.err("{any}\n{any}", .{ err, @errorReturnTrace() });
                     continue;
                 };
-                self.schedule(connection) catch |err| {
-                    @branchHint(.cold);
-                    log.err("{any}\n{any}", .{ err, @errorReturnTrace() });
-                    continue;
-                };
+                try threadPool.spawn(handleRequestMultiThread, .{ self, connection });
+                // threadPool.spawnWg(&waitGroup, handleRequestMultiThread, .{ self, connection });
             }
         }
     };

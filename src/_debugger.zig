@@ -6,23 +6,24 @@ pub const std_options: std.Options = .{
     // Set the log level to info to .debug. use the scope levels instead
     .log_level = switch (builtin.mode) {
         .Debug => .debug,
-        .ReleaseSafe => .debug,
-        .ReleaseSmall => .warn,
-        .ReleaseFast => .warn,
+        .ReleaseSafe => .err,
+        .ReleaseSmall => .err,
+        .ReleaseFast => .err,
     },
     .log_scope_levels = &[_]std.log.ScopeLevel{
-        .{ .scope = .HttpServer, .level = .info },
-        .{ .scope = .Perf, .level = .err },
+        .{ .scope = .HttpServer, .level = .err },
+        .{ .scope = .Perf, .level = .info },
         .{ .scope = .tcp, .level = .err },
     },
-    .logFn = LaggHTTP.logging.log,
+    // .logFn = LaggHTTP.logging.log,
+    .logFn = LaggHTTP.logging.noopLog,
 };
 
 pub fn main() !void {
-    try LaggHTTP.logging.setup(.{
-        .log_stdout = false,
-        .log_file = true,
-    });
+    // try LaggHTTP.logging.setup(.{
+    //     .log_stdout = false,
+    //     .log_file = true,
+    // });
     try debugHttpServer();
     // try debugStandardHttpServer();
     // try debugTCPListener();

@@ -22,6 +22,9 @@ var LogDir: std.fs.Dir = undefined;
 var LogFile: ?std.fs.File = null;
 var LogFileTimestamp: std.time.epoch.EpochDay = .{ .day = 0 };
 
+var lock_LogFile: std.Thread.Mutex = .{};
+var lock_stdout: std.Thread.Mutex = .{};
+
 // utils
 fn abspath(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
     if (std.fs.path.isAbsolute(path)) {
@@ -159,6 +162,7 @@ fn logInternal(comptime level: std.log.Level, comptime scope: @Type(.enum_litera
     });
 
     if (Settings.log_file) {
+        lock_LogFile.lock();
         const file = try ensureLogFile();
         try file.seekFromEnd(0);
         const file_writer = file.writer();
@@ -167,9 +171,11 @@ fn logInternal(comptime level: std.log.Level, comptime scope: @Type(.enum_litera
             try std.fmt.format(file_writer, "{s: >5}\t", .{timestamp_str});
             try std.fmt.format(file_writer, full_format, args);
         }
+        lock_LogFile.unlock();
     }
 
     if (Settings.log_stdout) {
+        lock_stdout.lock();
         const file = std.io.getStdOut();
         const file_writer = file.writer();
         // TODO escape whitespace
@@ -177,8 +183,17 @@ fn logInternal(comptime level: std.log.Level, comptime scope: @Type(.enum_litera
             try std.fmt.format(file_writer, "{s}\t", .{timestamp_str});
             try std.fmt.format(file_writer, full_format, args);
         }
+        lock_stdout.unlock();
     }
 }
 pub fn log(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), comptime format: []const u8, args: anytype) void {
     logInternal(level, scope, format, args) catch |err| std.debug.panic("could not write log: {any}{any}", .{ err, @errorReturnTrace() });
+}
+
+
+pub fn noopLog(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), comptime format: []const u8, args: anytype) void {
+    _ = level;
+    _ = scope;
+    _ = format;
+    _ = args;
 }

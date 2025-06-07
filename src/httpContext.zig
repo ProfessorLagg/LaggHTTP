@@ -57,7 +57,7 @@ pub const HttpContext = struct {
         result.response = try HttpResponse.init(result.allocator);
 
         const duration_ns = std.time.nanoTimestamp() - start;
-        PerfLog.info("HttpContext.init took {d} ns", .{duration_ns});
+        PerfLog.info("HttpContext.init\t{d}", .{duration_ns});
         return result;
     }
     pub fn deinit(self: *HttpContext) void {
@@ -65,7 +65,7 @@ pub const HttpContext = struct {
         self.request.deinit(self.allocator);
         self.response.deinit();
         const duration_ns = std.time.nanoTimestamp() - start;
-        PerfLog.info("HttpContext.deinit took {d} ns", .{duration_ns});
+        PerfLog.info("HttpContext.deinit\t{d}", .{duration_ns});
     }
 
     pub fn send(self: *HttpContext) !void {
@@ -242,7 +242,7 @@ pub const HttpRequest = struct {
         Log.debug("parsed request.body", .{});
 
         const duration_ns = std.time.nanoTimestamp() - start;
-        PerfLog.info("Parsing request took {d} ns", .{duration_ns});
+        PerfLog.info("HttpRequest.init\t{d}", .{duration_ns});
         return result;
     }
     pub fn deinit(self: *HttpRequest, allocator: std.mem.Allocator) void {
@@ -383,11 +383,13 @@ pub const HttpResponse = struct {
     headers: std.StringHashMap([]const u8),
     body: ?[]const u8 = null,
     pub fn init(allocator: std.mem.Allocator) !HttpResponse {
-        var r = HttpResponse{
+        const start = std.time.nanoTimestamp();
+        const r = HttpResponse{
             .allocator = allocator,
             .headers = std.StringHashMap([]const u8).init(allocator),
         };
-        try r.setDateHeader();
+        const duration_ns = std.time.nanoTimestamp() - start;
+        PerfLog.info("HttpResponse.init\t{d}", .{duration_ns});
         return r;
     }
     pub fn deinit(self: *HttpResponse) void {
@@ -455,7 +457,7 @@ pub const HttpResponse = struct {
             _ = try writer.write(self.body.?[0..]);
         }
         const duration_ns = std.time.nanoTimestamp() - start;
-        PerfLog.info("Sending response took {d} ns", .{duration_ns});
+        PerfLog.info("HttpResponse.send\t{d}", .{duration_ns});
     }
 };
 

@@ -143,10 +143,8 @@ pub const WindowsTCPListener = struct {
             return @intCast(result);
         }
         pub fn close(self: *const WindowsTCPConnection) !void {
-            var result: i32 = ws2_32.shutdown(self.socket, ws2_32.SD_BOTH);
-            if (result == ws2_32.SOCKET_ERROR) return GetLastWinsockError();
-            result = ws2_32.closesocket(self.socket);
-            if (result == ws2_32.SOCKET_ERROR) return GetLastWinsockError();
+            if (ws2_32.shutdown(self.socket, ws2_32.SD_BOTH) == ws2_32.SOCKET_ERROR) return GetLastWinsockError();
+            if (ws2_32.closesocket(self.socket) == ws2_32.SOCKET_ERROR) return GetLastWinsockError();
         }
     };
 

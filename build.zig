@@ -6,7 +6,9 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize: std.builtin.OptimizeMode = b.standardOptimizeOption(.{});
-    const single_threaded = true;
+    const single_threaded = false;
+    // const use_llvm = true;
+    // const use_lld = true;
 
     // ===== MODULES =====
     const lib_mod = b.createModule(.{
@@ -30,7 +32,8 @@ pub fn build(b: *std.Build) void {
         .linkage = .static,
         .name = "LaggHTTP",
         .root_module = lib_mod,
-        // .use_llvm = true,
+        // .use_llvm = use_llvm,
+        // .use_lld = use_lld,
     });
 
     b.installArtifact(lib);
@@ -38,7 +41,8 @@ pub fn build(b: *std.Build) void {
     const debugger = b.addExecutable(.{
         .name = "LaggHTTP.Debugger",
         .root_module = debugger_mod,
-        // .use_llvm = true,
+        // .use_llvm = use_llvm,
+        // .use_lld = use_lld,
     });
     b.installArtifact(debugger);
 

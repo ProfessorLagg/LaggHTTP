@@ -36,11 +36,17 @@ pub fn monthName3(self: *const DateTime) []const u8 {
     const mon: usize = self.month - 1;
     return weekday_names3[mon * 3 .. (mon + 1) * 3];
 }
+pub fn nowEpochSeconds() std.time.epoch.EpochSeconds {
+    const timestamp_ns: i128 = std.time.nanoTimestamp();
+    const timestamp_s: i128 = @divFloor(timestamp_ns, std.time.ns_per_s);
+    return std.time.epoch.EpochSeconds{ .secs = @truncate(@abs(timestamp_s)) };
+}
 pub fn now() DateTime {
     var result: DateTime = .{};
 
-    const timestamp_ns: u64 = @intCast(std.time.nanoTimestamp());
-    const epoc_seconds = std.time.epoch.EpochSeconds{ .secs = @divFloor(timestamp_ns, std.time.ns_per_s) };
+    // const timestamp_ns: u64 = @intCast(std.time.nanoTimestamp());
+    // const epoc_seconds = std.time.epoch.EpochSeconds{ .secs = @divFloor(timestamp_ns, std.time.ns_per_s) };
+    const epoc_seconds = nowEpochSeconds();
     const epoc_days = epoc_seconds.getEpochDay(); // number of days since the epoch
     const epoc_daySeconds = epoc_seconds.getDaySeconds();
     const epoc_yearAndDay = epoc_days.calculateYearDay();

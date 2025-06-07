@@ -104,7 +104,15 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
             var i: usize = 0;
             var handled: bool = false;
             while (!handled and i < opt.handlers.len) : (i += 1) {
-                handled = try opt.handlers[i](http);
+                handled = opt.handlers[i](http) catch |outer_err| {
+                    // TODO handle client closed
+                    log.warn("Server error: {any}{any}", .{ outer_err, @errorReturnTrace() });
+                    http.response.statusCode = HttpStatusCode.fromValue(503);
+
+                    _ = self.errorHandler.handle(http) catch |inner_err| {
+                        std.log.err("Sending error response failed: {any}{any}", .{ inner_err, @errorReturnTrace() });
+                    };
+                };
             }
             if (!handled) {
                 http.response.statusCode = HttpStatusCode.fromValue(404);

@@ -11,12 +11,15 @@ pub const std_options: std.Options = .{
         .ReleaseFast => .err,
     },
     .log_scope_levels = &[_]std.log.ScopeLevel{
-        .{ .scope = .HttpServer, .level = .info },
+        .{ .scope = .HttpServer, .level = .err },
         .{ .scope = .Perf, .level = .err },
+        .{ .scope = .tcp, .level = .err },
     },
+    .logFn = LaggHTTP.logging.log,
 };
 
 pub fn main() !void {
+    try LaggHTTP.logging.setup(.{ .log_stdout = builtin.mode == .Debug });
     try debugHttpServer();
     // try debugStandardHttpServer();
     // try debugTCPListener();

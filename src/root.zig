@@ -18,3 +18,8 @@ pub const utils = @import("utils.zig");
 test utils {
     _ = utils;
 }
+
+pub const logging = @import("logging.zig");
+test logging {
+    _ = logging;
+}

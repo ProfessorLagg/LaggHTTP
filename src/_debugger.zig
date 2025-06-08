@@ -24,6 +24,7 @@ pub fn main() !void {
     //     .log_stdout = false,
     //     .log_file = true,
     // });
+
     try debugHttpServer();
     // try debugStandardHttpServer();
     // try debugTCPListener();

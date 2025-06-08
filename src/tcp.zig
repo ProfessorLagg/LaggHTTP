@@ -129,6 +129,9 @@ pub const WindowsTCPListener = struct {
         pub fn writer(self: WindowsTCPConnection) Writer {
             return .{ .context = self };
         }
+        pub fn anywriter(self: *const WindowsTCPConnection) std.io.AnyWriter {
+            return std.io.AnyWriter{ .context = self, .writeFn = write_any };
+        }
 
         pub fn read(self: WindowsTCPConnection, buf: []u8) anyerror!usize {
             std.debug.assert(buf.len < std.math.maxInt(i32));
@@ -141,6 +144,11 @@ pub const WindowsTCPListener = struct {
             const result = ws2_32.send(self.socket, buf.ptr, @intCast(buf.len), 0);
             if (result == ws2_32.SOCKET_ERROR) return GetLastWinsockError();
             return @intCast(result);
+        }
+        fn write_any(context: *const anyopaque, bytes: []const u8) anyerror!usize {
+            // TODO figure out if i can assert the type here
+            const self: *const WindowsTCPConnection = @ptrCast(@alignCast(context));
+            return try self.write(bytes);
         }
         pub fn close(self: *const WindowsTCPConnection) !void {
             if (ws2_32.shutdown(self.socket, ws2_32.SD_BOTH) == ws2_32.SOCKET_ERROR) return GetLastWinsockError();

@@ -6,9 +6,9 @@ const tcp = @import("tcp.zig");
 const TCPListener = tcp.TCPListener;
 const TCPConnection = tcp.TCPConnection;
 
-const sso = @import("sso.zig");
-const SSO = sso.SSO;
-const SSOMap = sso.SSOMap;
+const httpHeaders = @import("httpHeaders.zig");
+pub const HttpHeader = httpHeaders.HttpHeader;
+const HttpHeaderMap = httpHeaders.HttpHeaderMap;
 
 const utils = @import("utils.zig");
 
@@ -19,20 +19,6 @@ const DateTime = @import("dateTime.zig");
 
 const Log = std.log.scoped(.HttpContext);
 const PerfLog = std.log.scoped(.Perf);
-
-// === TYPES ===
-pub const HttpHeaderField = struct {
-    key: []const u8,
-    val: []const u8,
-
-    /// Allocates a new HttpHeaderField by cloning both key and val
-    pub fn asClone(allocator: std.mem.Allocator, key: []const u8, val: []const u8) !HttpHeaderField {
-        return HttpHeaderField{
-            .key = try utils.mem.clone(u8, allocator, key),
-            .val = try utils.mem.clone(u8, allocator, val),
-        };
-    }
-};
 
 // === CONTEXT ===
 pub const HttpContextOptions = struct {
@@ -110,15 +96,16 @@ pub const HttpRequest = struct {
     rawFields: []const u8,
     body: ?[]const u8 = null,
 
-    fn find_field(fields: []const u8, key: []const u8) ?HttpHeaderField {
+    fn find_field(fields: []const u8, key: []const u8) ?HttpHeader {
         const start: usize = utils.strings.indexOf(fields, key) orelse return null;
         var slice = fields[start..];
         const end: usize = utils.strings.indexOf(slice, "\r\n") orelse slice.len;
         slice = slice[0..end];
         const splitIndex: usize = utils.strings.indexOf(slice, ": ") orelse return null;
-        return HttpHeaderField{
-            .key = slice[0..splitIndex],
-            .val = slice[splitIndex + 2 ..],
+        return HttpHeader{
+            .buf_ptr = slice.ptr,
+            .buf_len = @truncate(slice.len),
+            .keylen = @truncate(splitIndex),
         };
     }
     fn parse_request_line(self: *HttpRequest) !void {
@@ -251,7 +238,7 @@ pub const HttpRequest = struct {
     }
 
     /// Returns the Http Header Field with the specified key if found
-    pub inline fn getField(self: *const HttpRequest, key: []const u8) ?HttpHeaderField {
+    pub inline fn getField(self: *const HttpRequest, key: []const u8) ?HttpHeader {
         return find_field(self.rawFields, key);
     }
 };
@@ -376,34 +363,22 @@ pub const HttpStatusCode = enum(u16) {
 pub const HttpResponse = struct {
     const versionString = "HTTP/1.1";
 
-    allocator: std.mem.Allocator,
-
     statusCode: HttpStatusCode = .OK,
 
-    headers: std.StringHashMap([]const u8),
+    headers: HttpHeaderMap,
     body: ?[]const u8 = null,
     pub fn init(allocator: std.mem.Allocator) !HttpResponse {
         const start = std.time.nanoTimestamp();
         const r = HttpResponse{
-            .allocator = allocator,
-            .headers = std.StringHashMap([]const u8).init(allocator),
+            .headers = HttpHeaderMap.init(allocator),
         };
         const duration_ns = std.time.nanoTimestamp() - start;
         PerfLog.info("HttpResponse.init\t{d}", .{duration_ns});
         return r;
     }
     pub fn deinit(self: *HttpResponse) void {
-        var val_iter = self.headers.valueIterator();
-        while (val_iter.next()) |val_ptr| {
-            self.allocator.free(val_ptr.*);
-        }
         self.headers.deinit();
-        if (self.body != null) self.allocator.free(self.body.?);
-    }
-    /// Sets a header field to the input val. val is cloned.
-    pub fn setHeader(self: *HttpResponse, key: []const u8, val: []const u8) !void {
-        const vclone = try utils.mem.clone(u8, self.allocator, val);
-        try self.headers.put(key, vclone);
+        if (self.body != null) self.headers.allocator.free(self.body.?);
     }
 
     /// Sets the HTTP Date header to now
@@ -425,32 +400,35 @@ pub const HttpResponse = struct {
             },
         );
 
-        try self.setHeader(key[0..], value[0..]);
-    }
-    /// sets the Content-Length header field to match self.body.len
-    pub fn ensureContentLength(self: *HttpResponse) !void {
-        var buf: [16]u8 = undefined;
-        var contentLength: usize = 0;
-        if (self.body != null) contentLength = self.body.?.len;
-        const str = utils.strings.fastIntToString(@TypeOf(contentLength), contentLength, &buf);
-        try self.setHeader("Content-Length", str);
+        try self.headers.set(key[0..], value[0..]);
     }
 
-    fn writeHeaderFields(self: *const HttpResponse, writer: TCPConnection.Writer) !void {
-        var iter = self.headers.iterator();
-        while (iter.next()) |entry| {
-            try std.fmt.format(writer, "{s}: {s}\r\n", .{ entry.key_ptr.*, entry.value_ptr.* });
+    /// sets the Content-Length header field to match self.body.len
+    pub fn setContentLengthHeader(self: *HttpResponse) !void {
+        var buf: [16]u8 = undefined;
+        const contentLength: usize = blk: {
+            if (self.body == null) break :blk 0;
+            break :blk self.body.?.len;
+        };
+        const str = utils.strings.fastIntToString(@TypeOf(contentLength), contentLength, &buf);
+        try self.headers.set("Content-Length", str);
+    }
+
+    fn writeHeaderFields(self: *const HttpResponse, writer: std.io.AnyWriter) !void {
+        for (self.headers.all()) |header| {
+            try std.fmt.format(writer, "{s}\r\n", .{header.string()});
         }
     }
-    fn writeStatusLine(self: *const HttpResponse, writer: TCPConnection.Writer) !void {
+    fn writeStatusLine(self: *const HttpResponse, writer: std.io.AnyWriter) !void {
         try std.fmt.format(writer, "{s} {d} {s}\r\n", .{ versionString, @intFromEnum(self.statusCode), @tagName(self.statusCode) });
     }
     pub fn send(self: *HttpResponse, stream: TCPConnection) !void {
         const start = std.time.nanoTimestamp();
-        var writer = stream.writer();
-        try self.writeStatusLine(writer);
+        var writer = stream.anywriter();
+
         try self.setDateHeader();
-        try self.ensureContentLength();
+        try self.setContentLengthHeader();
+        try self.writeStatusLine(writer);
         try self.writeHeaderFields(writer);
         if (self.body != null) {
             _ = try writer.write("\r\n"[0..]);

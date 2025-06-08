@@ -9,7 +9,7 @@ const HttpContextOptions = httpContextNs.HttpContextOptions;
 const HttpContext = httpContextNs.HttpContext;
 const HttpRequestOptions = httpContextNs.HttpRequestOptions;
 const HttpRequest = httpContextNs.HttpRequest;
-const HttpHeaderField = httpContextNs.HttpHeaderField;
+const HttpHeader = httpContextNs.HttpHeader;
 const HttpResponse = httpContextNs.HttpResponse;
 const HttpRequestHandler = httpContextNs.HttpRequestHandler;
 const HttpStatusCode = httpContextNs.HttpStatusCode;
@@ -46,11 +46,11 @@ const DefaultErrorHandler = struct {
         const statusCodeValue: u16 = statusCode.value();
         std.debug.assert(statusCode.isError());
 
-        const req_content_type: ?HttpHeaderField = http.request.getField("Content-Type");
-        const isHtml = req_content_type != null and utils.strings.streql("text/html", req_content_type.?.val);
+        const req_content_type: ?HttpHeader = http.request.getField("Content-Type");
+        const isHtml = req_content_type != null and utils.strings.streql("text/html", req_content_type.?.valstr());
         if (isHtml) {
-            try http.response.setHeader("Content-Type", "text/html");
-            http.response.body = try getErrorHtml(http.response.allocator, .NotFound, "page not found");
+            try http.response.headers.set("Content-Type", "text/html");
+            http.response.body = try getErrorHtml(http.allocator, .NotFound, "page not found");
         }
 
         log.warn("Sending HTTP error {d}", .{statusCodeValue});

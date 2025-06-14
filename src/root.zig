@@ -23,3 +23,8 @@ pub const logging = @import("logging.zig");
 test logging {
     _ = logging;
 }
+
+pub const URI = @import("uri.zig");
+test URI {
+    _ = URI;
+}

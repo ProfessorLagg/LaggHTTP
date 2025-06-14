@@ -58,6 +58,7 @@ pub fn build(b: *std.Build) void {
     // ===== TESTS =====
     const lib_unit_tests = b.addTest(.{
         .root_module = lib_mod,
+       .test_runner = .{ .path = b.path("src/test_runner.zig"), .mode = .simple },
     });
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
     const test_step = b.step("test", "Run unit tests");

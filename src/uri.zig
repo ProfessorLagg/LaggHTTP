@@ -38,6 +38,7 @@ pub const URIError = error{
     SchemeMissing,
     PathMissing,
     MalformedAuthority,
+    HostMissing,
 };
 
 /// RFC 3986 Uniform Resource Identifier (URI)
@@ -52,6 +53,23 @@ path: []const u8 = undefined,
 query: ?[]const u8 = undefined,
 fragment: ?[]const u8 = undefined,
 
+/// Helper function to parse the Authority sub-components. Only intended for use inside the parse function
+inline fn parseAuthoritySubComponents(self: *URI) !void {
+    std.debug.assert(self.authority != null);
+    if (self.authority.?.len <= 1) return URIError.MalformedAuthority;
+
+    var S = self.authority.?[0..];
+    if (std.mem.indexOfScalar(u8, S, '@')) |userinfo_end| {
+        self.userinfo = S[0..userinfo_end];
+        S = S[userinfo_end + 1 ..];
+    }
+    if (std.mem.indexOfScalar(u8, S, ':')) |port_start| {
+        self.port = S[port_start + 1 ..];
+        S = S[0..port_start];
+    }
+    self.host = S[0..];
+    if (self.host.?.len <= 1) return URIError.HostMissing;
+}
 /// Tries to slice `str` into it's component URI parts
 pub fn parse(str: []const u8) URIError!URI {
     // TODO Check for minimum URI length
@@ -65,8 +83,8 @@ pub fn parse(str: []const u8) URIError!URI {
         if (URICharacterType.get(S[uri.scheme.len]) == .invalid) return URIError.InvalidCharacter;
         uri.scheme.len += 1;
     }
-    S = S[uri.scheme.len + 1..];
-    std.log.warn("parsed scheme as '{s}'. Remaning of S is '{s}'", .{ uri.scheme, S });
+    S = S[uri.scheme.len + 1 ..];
+
     // Parsing Authority
     if (S[0] == '/' and S[1] == '/') {
         S = S[2..];
@@ -77,35 +95,43 @@ pub fn parse(str: []const u8) URIError!URI {
             uri.authority.?.len += 1;
         }
         S = S[uri.authority.?.len..];
-        std.log.warn("parsed authority as '{s}'. Remaning of S is '{s}'", .{ uri.scheme, S });
-        // TODO Parse Authority sub-components
+
+        try uri.parseAuthoritySubComponents();
     }
 
+    S = S[@intFromBool(S[0] == '/')..];
     uri.path = S[0..0];
-    var tptr: *[]const u8 = &uri.path;
-    while (tptr.len < S.len) {
-        const c: u8 = S[tptr.len];
+    while (uri.path.len < S.len) {
+        const c: u8 = S[uri.path.len];
         if (URICharacterType.get(c) == .invalid) return URIError.InvalidCharacter;
         switch (c) {
-            '@' => {
-                // the path is over and i've hit the query part
-                std.debug.assert(tptr == &uri.path);
-                S = S[tptr.len + 1 ..];
+            '?', '#' => break,
+            else => uri.path.len += 1,
+        }
+    }
+    S = S[uri.path.len..];
+
+    while (S.len > 0) {
+        switch (S[0]) {
+            '?' => {
+                // Parsing query
+                S = S[@intFromBool(S[0] == '?')..];
                 uri.query = S[0..0];
-                tptr = &uri.query.?;
+                il: while (uri.query.?.len < S.len) {
+                    const c: u8 = S[uri.query.?.len];
+                    if (URICharacterType.get(c) == .invalid) return URIError.InvalidCharacter;
+                    if (c == '#') break :il;
+                    uri.query.?.len += 1;
+                }
+                S = S[uri.query.?.len..];
             },
             '#' => {
-                std.debug.assert( //
-                    (uri.query == null and tptr == &uri.path) // if query is null, tptr should be path
-                    or (uri.query != null and tptr == &uri.query.?) // if query is not null, tptr should be query
-                );
-
-                S = S[tptr.len + 1 ..];
-                uri.fragment = S[0..0];
-                tptr = &uri.fragment.?;
+                // Parsing fragment
+                S = S[@intFromBool(S[0] == '#')..];
+                uri.fragment = S[0..];
+                S = S[uri.fragment.?.len..];
             },
-
-            else => tptr.len += 1,
+            else => unreachable,
         }
     }
 

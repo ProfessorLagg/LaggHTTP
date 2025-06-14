@@ -452,11 +452,11 @@ pub const HttpRequestHandler = struct {
 
 // === Tests ===
 test HttpContext {
-    _ = HttpContext(.{});
+    _ = HttpContext;
 }
 test HttpRequest {
-    _ = HttpRequest(.{});
+    _ = HttpRequest;
 }
 test HttpResponse {
-    _ = HttpResponse(.{});
+    _ = HttpResponse;
 }

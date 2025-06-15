@@ -435,6 +435,53 @@ pub const meta = struct {
     ) bool {
         comptime if (!isTypedVector(T, typecheck)) unreachable;
     }
+
+    pub fn isFunction(comptime T: type) bool {
+        comptime {
+            const ti: std.builtin.Type = @typeInfo(T);
+            return ti == .@"fn";
+        }
+    }
+    pub fn assertIsFunction(comptime T: type) void {
+        comptime if (!isFunction(T)) unreachable;
+    }
+
+    pub fn isStruct(comptime T: type) bool {
+        comptime {
+            const ti: std.builtin.Type = @typeInfo(T);
+            return ti == .@"struct";
+        }
+    }
+    pub fn assertIsStruct(comptime T: type) void {
+        comptime if (!isStruct(T)) unreachable;
+    }
+
+    pub fn hasFn(comptime T: type, comptime Tfn: type, comptime name: []const u8) bool {
+        comptime {
+            assertIsStruct(T);
+            assertIsFunction(Tfn);
+
+            if (!std.meta.hasFn(name)) return false;
+            const Tfn_found: type = @TypeOf(@field(T, name));
+            assertIsFunction(Tfn_found);
+
+            const params_expect = @typeInfo(Tfn_found).@"fn".params;
+            const params_found = @typeInfo(Tfn).@"fn".params;
+            if (params_expect.len != params_found.len) return false;
+
+            for (0..params_expect.len) |i| {
+                if (params_expect[i].type != params_found[i].type) return false;
+            }
+
+            // TODO check return values
+
+            return true;
+        }
+    }
+
+    pub fn assertHasFn(comptime T: type, comptime Tfn: type, comptime name: []const u8) void {
+        comptime if (!hasFn(T, Tfn, name)) unreachable;
+    }
 };
 
 pub const fs = struct {
@@ -450,6 +497,7 @@ pub const fs = struct {
         defer allocator.free(cwd_path);
         return try std.fs.path.resolve(allocator, &.{ cwd_path, path });
     }
+
     /// Opens a directory, based on an absolute path.
     /// Creates the directory if it does not exist.
     /// The directory is a system resource that remains open until close is called on the result.
@@ -466,6 +514,47 @@ pub const fs = struct {
                 else => return err,
             }
         };
+    }
+
+    fn file_read_any(context: *const anyopaque, buffer: []u8) anyerror!usize {
+        const file: *const std.fs.File = @ptrCast(@alignCast(context));
+        return try file.read(buffer);
+    }
+    pub fn fileAnyReader(file: *const std.fs.File) std.io.AnyReader {
+        return std.io.AnyReader{
+            .context = file,
+            .readFn = file_read_any
+        };
+    }
+
+    fn file_write_any(context: *const anyopaque, buffer: []u8) anyerror!usize {
+        const file: *const std.fs.File = @ptrCast(@alignCast(context));
+        return try file.write(buffer);
+    }
+    pub fn fileAnyWriter(file: *const std.fs.File) std.io.AnyWriter {
+        return std.io.AnyReader{
+            .context = file,
+            .readFn = file_write_any
+        };
+    }
+};
+
+pub const io = struct {
+    pub fn copyTo(reader: std.io.AnyReader, writer: std.io.AnyWriter) !usize {
+        copyToBuffered(std.heap.page_size_min, reader, writer);
+    }
+
+    pub fn copyToBuffered(comptime buffersize: usize, reader: std.io.AnyReader, writer: std.io.AnyWriter) !usize {
+        var buffer: [buffersize]u8 = undefined;
+        var slice: []const u8 = buffer[0..];
+        var result: usize = 0;
+        while (true) {
+            slice.len = try reader.read(buffer);
+            if (slice.len == 0) break;
+            const write_len = writer.write(slice);
+            std.debug.assert(slice.len == write_len);
+            result += write_len;
+        }
     }
 };
 

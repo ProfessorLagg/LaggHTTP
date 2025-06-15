@@ -6,23 +6,24 @@ pub const std_options: std.Options = .{
     // Set the log level to info to .debug. use the scope levels instead
     .log_level = switch (builtin.mode) {
         .Debug => .debug,
-        .ReleaseSafe => .err,
-        .ReleaseSmall => .err,
-        .ReleaseFast => .err,
+        .ReleaseSafe => .debug,
+        .ReleaseSmall => .debug,
+        .ReleaseFast => .debug,
     },
     .log_scope_levels = &[_]std.log.ScopeLevel{
-        .{ .scope = .HttpServer, .level = .err },
-        .{ .scope = .Perf, .level = .info },
+        .{ .scope = .HttpServer, .level = .debug },
+        .{ .scope = .HttpContext, .level = .debug },
+        .{ .scope = .Perf, .level = .err },
         .{ .scope = .tcp, .level = .err },
     },
-    .logFn = LaggHTTP.logging.log,
+    // .logFn = LaggHTTP.logging.log,
     // .logFn = LaggHTTP.logging.noopLog,
 };
 
 pub fn main() !void {
     try LaggHTTP.logging.setup(.{
-        .log_stdout = false,
-        .log_file = true,
+        .log_stdout = true,
+        .log_file = false,
     });
 
     try debugHttpServer();
@@ -212,10 +213,15 @@ fn debugStandardHttpServer() !void {
 
 fn debugHttpServer() !void {
     const allocator = std.heap.c_allocator;
+
     const address: LaggHTTP.tcp.TCPListener.IpAddress = LaggHTTP.tcp.TCPListener.IpAddress.initIPv4(.{ 127, 0, 0, 1 });
     const port: u16 = 5500;
     var server = LaggHTTP.HttpServer(.{}).init(allocator, address, port);
     defer server.deinit();
+
+    const wwwroot_path = try LaggHTTP.HTTPFileHandler.defaultRootPath(allocator);
+    const fileHandler = try LaggHTTP.HTTPFileHandler.init(allocator, wwwroot_path);
+    _ = try server.handlers.append(fileHandler.handler());
 
     try server.run();
 }

@@ -38,7 +38,7 @@ const DefaultErrorHandler = struct {
         );
     }
 
-    fn handle(ctx: ?*anyopaque, http: *HttpContext) !bool {
+    fn handle(ctx: ?usize, http: *HttpContext) !bool {
         std.debug.assert(ctx == null);
         const statusCode: HttpStatusCode = http.response.statusCode;
         const statusCodeValue: u16 = statusCode.value();
@@ -46,19 +46,20 @@ const DefaultErrorHandler = struct {
 
         const req_content_type: ?HttpHeader = http.request.getField("Content-Type");
         const isHtml = req_content_type != null and utils.strings.streql("text/html", req_content_type.?.valstr());
+        var body: ?[]const u8 = null;
         if (isHtml) {
             try http.response.headers.set("Content-Type", "text/html");
-            http.response.body = try getErrorHtml(http.allocator, .NotFound, "page not found");
+            body = try getErrorHtml(http.allocator, .NotFound, "page not found");
         }
 
         log.warn("Sending HTTP error {d}", .{statusCodeValue});
-        try http.send();
+        try http.sendBuffer(body);
 
         return true;
     }
 
     pub fn handler() HttpRequestHandler {
-        return HttpRequestHandler{ .context = null, .handleFn = &DefaultErrorHandler.handle };
+        return HttpRequestHandler{ .context_ptr = null, .handleFn = &DefaultErrorHandler.handle };
     }
 };
 
@@ -104,11 +105,11 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
 
         fn handleError(self: *const Self, http: *HttpContext, outer_err: anyerror) bool {
             // TODO handle client closed
-            log.warn("Server error: {any}{any}", .{ outer_err, @errorReturnTrace()});
-            http.response.statusCode = HttpStatusCode.fromValue(503);
+            log.warn("Server error: {any}{any}", .{ outer_err, @errorReturnTrace() });
+            http.response.statusCode = HttpStatusCode.InternalServerError;
 
             _ = self.errorHandler.handle(http) catch |inner_err| {
-                log.err("Sending error response failed: {any}{any}", .{ inner_err, @errorReturnTrace()});
+                log.err("Sending error response failed: {any}{any}", .{ inner_err, @errorReturnTrace() });
             };
 
             return true; // this request was handled by the error handler

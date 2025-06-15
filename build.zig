@@ -12,6 +12,7 @@ fn copy_dir_to_output(b: *std.Build, src_path: []const u8, dst_path: []const u8)
         pub fn copyFile(s_dir: std.fs.Dir, s_path: []const u8, d_dir: std.fs.Dir, d_path: []const u8) !void {
             try s_dir.copyFile(s_path, d_dir, d_path, .{});
             const d_file: std.fs.File = try d_dir.openFile(d_path, .{ .mode = .write_only });
+            defer d_file.close();
             const s_stat: std.fs.Dir.Stat = try s_dir.statFile(s_path);
             try d_file.updateTimes(s_stat.atime, s_stat.mtime);
         }
@@ -29,8 +30,10 @@ fn copy_dir_to_output(b: *std.Build, src_path: []const u8, dst_path: []const u8)
 
     const src_abspath = b.pathFromRoot(src_path);
     var src_dir: std.fs.Dir = try std.fs.openDirAbsolute(src_abspath, .{ .iterate = true });
+    defer src_dir.close();
     const install_dir: std.fs.Dir = try local_utils.openMakeDirAbsolute(b.install_path, .{});
     var dst_dir: std.fs.Dir = try install_dir.makeOpenPath(dst_path, .{});
+    defer dst_dir.close();
 
     var walker = try src_dir.walk(b.allocator);
     defer walker.deinit();

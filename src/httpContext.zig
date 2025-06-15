@@ -56,8 +56,12 @@ pub const HttpContext = struct {
         PerfLog.info("HttpContext.deinit\t{d}", .{duration_ns});
     }
 
-    pub fn send(self: *HttpContext) !void {
-        try self.response.send(self.connection);
+    pub fn sendBuffer(self: *HttpContext, body: ?[]const u8) !void {
+        try self.response.sendBuffer(self.connection, body);
+    }
+
+    pub fn sendFile(self: *HttpContext, file: *const std.fs.File) !void {
+        try self.response.sendFile(self.connection, file);
     }
 };
 
@@ -161,36 +165,40 @@ pub const HttpRequest = struct {
         const headers_end: usize = std.mem.indexOf(u8, slice, HeaderBodySeperator) orelse return HttpRequestError.MalformedHeader;
         result.header = try utils.mem.clone(u8, allocator, slice[0..headers_end]);
         errdefer allocator.free(result.header);
-        Log.debug("parsed result.header", .{});
+        Log.debug("parsed result.header: \"{s}\"", .{result.header});
 
         if (result.header.len < RequestLineMinLen + 2) return HttpRequestError.MalformedRequestLine;
         result.requestLine = result.header[0..];
         result.requestLine.len = std.mem.indexOf(u8, result.requestLine, RegisteredNurse) orelse return HttpRequestError.MalformedRequestLine;
-        Log.debug("parsed result.requestLine", .{});
+        Log.debug("parsed result.requestLine: \"{s}\"", .{result.requestLine});
 
-        result.method = result.requestLine[0..];
-        result.method.len = std.mem.indexOfScalar(u8, result.method, ' ') orelse {
-            Log.err("request line \"{s}\" missing method", .{result.requestLine});
-            return HttpRequestError.MalformedRequestLine;
-        };
-        Log.debug("parsed result.method", .{});
+        try result.parse_request_line();
+        Log.debug("parsed result.method: \"{s}\"", .{result.method});
+        Log.debug("parsed result.target: \"{s}\"", .{result.target});
+        Log.debug("parsed result.version: \"{s}\"", .{result.version});
+        // result.method = result.requestLine[0..];
+        // result.method.len = std.mem.indexOfScalar(u8, result.method, ' ') orelse {
+        //     Log.err("request line \"{s}\" missing method", .{result.requestLine});
+        //     return HttpRequestError.MalformedRequestLine;
+        // };
+        // Log.debug("parsed result.method: \"{s}\"", .{result.method});
 
-        result.target = result.requestLine[result.method.len..];
-        result.target.len = std.mem.indexOfScalar(u8, result.target, ' ') orelse {
-            Log.err("request line \"{s}\" missing path", .{result.requestLine});
-            return HttpRequestError.MalformedRequestLine;
-        };
-        Log.debug("parsed result.path", .{});
+        // result.target = result.requestLine[result.method.len..];
+        // result.target.len = std.mem.indexOfScalar(u8, result.target, ' ') orelse {
+        //     Log.err("request line \"{s}\" missing path", .{result.requestLine});
+        //     return HttpRequestError.MalformedRequestLine;
+        // };
+        // Log.debug("parsed result.target: \"{s}\"", .{result.target});
 
-        result.version = result.requestLine[result.target.len..];
-        if (result.version.len < VersionMinLen) return {
-            Log.err("request line \"{s}\" missing version", .{result.requestLine});
-            return HttpRequestError.MalformedRequestLine;
-        };
-        Log.debug("parsed result.version", .{});
+        // result.version = result.requestLine[result.target.len..];
+        // if (result.version.len < VersionMinLen) return {
+        //     Log.err("request line \"{s}\" missing version", .{result.requestLine});
+        //     return HttpRequestError.MalformedRequestLine;
+        // };
+        // Log.debug("parsed result.version: \"{s}\"", .{result.version});
 
         result.rawFields = result.header[result.requestLine.len..];
-        Log.debug("parsed result.rawFields", .{});
+        Log.debug("parsed result.rawFields: \"{s}\"", .{result.rawFields});
 
         // Body
         var body: []u8 = try utils.mem.clone(u8, allocator, slice[headers_end..]);
@@ -253,6 +261,7 @@ pub const HttpStatusCode = enum(u16) {
     SwitchingProtocols = 101,
     Processing = 102,
     EarlyHints = 103,
+
     OK = 200,
     Created = 201,
     Accepted = 202,
@@ -263,6 +272,7 @@ pub const HttpStatusCode = enum(u16) {
     MultiStatus = 207,
     AlreadyReported = 208,
     IMUsed = 226,
+
     MultipleChoices = 300,
     MovedPermanently = 301,
     Found = 302,
@@ -272,6 +282,7 @@ pub const HttpStatusCode = enum(u16) {
     Unused = 306,
     RedirectKeepVerb = 307,
     PermanentRedirect = 308,
+
     BadRequest = 400,
     Unauthorized = 401,
     PaymentRequired = 402,
@@ -299,6 +310,7 @@ pub const HttpStatusCode = enum(u16) {
     TooManyRequests = 429,
     RequestHeaderFieldsTooLarge = 431,
     UnavailableForLegalReasons = 451,
+
     InternalServerError = 500,
     NotImplemented = 501,
     BadGateway = 502,
@@ -370,7 +382,6 @@ pub const HttpResponse = struct {
     statusCode: HttpStatusCode = .OK,
 
     headers: HttpHeaderMap,
-    body: ?[]const u8 = null,
     pub fn init(allocator: std.mem.Allocator) !HttpResponse {
         const start = std.time.nanoTimestamp();
         const r = HttpResponse{
@@ -382,7 +393,6 @@ pub const HttpResponse = struct {
     }
     pub fn deinit(self: *HttpResponse) void {
         self.headers.deinit();
-        if (self.body != null) self.headers.allocator.free(self.body.?);
     }
 
     /// Sets the HTTP Date header to now
@@ -408,12 +418,8 @@ pub const HttpResponse = struct {
     }
 
     /// sets the Content-Length header field to match self.body.len
-    pub fn setContentLengthHeader(self: *HttpResponse) !void {
+    pub fn setContentLengthHeader(self: *HttpResponse, contentLength: usize) !void {
         var buf: [16]u8 = undefined;
-        const contentLength: usize = blk: {
-            if (self.body == null) break :blk 0;
-            break :blk self.body.?.len;
-        };
         const str = utils.strings.fastIntToString(@TypeOf(contentLength), contentLength, &buf);
         try self.headers.set("Content-Length", str);
     }
@@ -426,18 +432,45 @@ pub const HttpResponse = struct {
     fn writeStatusLine(self: *const HttpResponse, writer: std.io.AnyWriter) !void {
         try std.fmt.format(writer, "{s} {d} {s}\r\n", .{ versionString, @intFromEnum(self.statusCode), @tagName(self.statusCode) });
     }
-    pub fn send(self: *HttpResponse, stream: TCPConnection) !void {
+
+    pub fn sendBuffer(self: *HttpResponse, stream: TCPConnection, body: ?[]const u8) !void {
         const start = std.time.nanoTimestamp();
         var writer = stream.anywriter();
 
+        if (body != null) try self.setContentLengthHeader(body.?.len);
         try self.setDateHeader();
-        try self.setContentLengthHeader();
         try self.writeStatusLine(writer);
         try self.writeHeaderFields(writer);
-        if (self.body != null) {
+        if (body != null) {
             _ = try writer.write("\r\n"[0..]);
-            _ = try writer.write(self.body.?[0..]);
+            _ = try writer.write(body.?[0..]);
         }
+        const duration_ns = std.time.nanoTimestamp() - start;
+        PerfLog.info("HttpResponse.send\t{d}", .{duration_ns});
+    }
+    pub fn sendFile(self: *HttpResponse, stream: TCPConnection, file: *const std.fs.File) !void {
+        const start = std.time.nanoTimestamp();
+        var anywriter = stream.anywriter();
+
+        const stat = try file.stat();
+
+        try self.setDateHeader();
+        try self.setContentLengthHeader(stat.size);
+
+        try self.writeStatusLine(anywriter);
+        try self.writeHeaderFields(anywriter);
+
+        // Write body
+        _ = try anywriter.write("\r\n"[0..]);
+        var buffer: [4096]u8 = undefined;
+        var slice: []u8 = buffer[0..];
+        while (true) {
+            slice.len = try file.read(buffer[0..]);
+            if (slice.len == 0) break;
+            const write_len = try stream.write(slice);
+            std.debug.assert(write_len == slice.len);
+        }
+
         const duration_ns = std.time.nanoTimestamp() - start;
         PerfLog.info("HttpResponse.send\t{d}", .{duration_ns});
     }
@@ -446,11 +479,11 @@ pub const HttpResponse = struct {
 // === HANDLER ===
 /// Function that can handle requests. Must return false if the request cannot be handled
 pub const HttpRequestHandler = struct {
-    context: ?*anyopaque,
-    handleFn: *const fn (?*anyopaque, *HttpContext) anyerror!bool,
+    context_ptr: ?usize,
+    handleFn: *const fn (?usize, *HttpContext) anyerror!bool,
 
     pub fn handle(self: *const HttpRequestHandler, http: *HttpContext) anyerror!bool {
-        return try self.handleFn(self.context, http);
+        return try self.handleFn(self.context_ptr, http);
     }
 };
 

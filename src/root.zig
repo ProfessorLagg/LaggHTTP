@@ -28,3 +28,8 @@ pub const URI = @import("uri.zig");
 test URI {
     _ = URI;
 }
+
+pub const HTTPFileHandler = @import("fileserver.zig").HTTPFileHandler;
+test HTTPFileHandler {
+    _ = HTTPFileHandler;
+}

@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no">
+        <title>Laggdoku Cheating</title>
+    </head>
+    <body>
+        <script>
+            async function cheatHighscore() { localStorage["high-score"] = document.getElementById("highscore").value; }
+        </script>
+        <label for="highscore">Highscore</label>
+        <input id="highscore" name="highscore" type="number">
+        <button onclick="cheatHighscore()">Commit</button>
+        <script>
+            document.getElementById("highscore").value = localStorage["high-score"] ?? 0;
+        </script>
+    </body>
+
+</html>

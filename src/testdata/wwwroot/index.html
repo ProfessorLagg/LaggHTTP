@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="mobile-web-app-capable" content="yes">
+        <link rel="icon" type="image/svg+xml" href="img/block_no_border.svg">
+        <link rel="stylesheet" href="css/root.css">
+        <link rel="stylesheet" href="css/backgrounds.css">
+        <script src="js/typechecker.js"></script>
+        <script src="js/utils.js"></script>
+        <script src="js/extentions.js"></script>
+        <script src="js/pointerdata.js"></script>
+        <script src="js/shapes.js"></script>
+        <script src="js/prng.js"></script>
+        <script src="js/GameState.js"></script>
+        <script src="js/fps.js"></script>
+        <title>Laggdoku</title>
+    </head>
+
+    <body style="overscroll-behavior: none;">
+        <div class="background-pattern2"></div>
+        <img src="img/block_opaque_border.svg" alt="block" id="blck-img" style="display: none;" loading="eager">
+        <img src="img/cell_border.svg" alt="block" id="cell-img" style="display: none;" loading="eager">
+        <img src="img/cell_highlight.svg" alt="block" id="highlight-img" style="display: none;" loading="eager">
+        <div id="game-wrap" class="game-wrap">
+            <div id="game-score-wrap">
+                <span id="game-score" class="score-display" value="0">0</span>
+                <span id="game-highscore" class="score-display" value="0">0</span>
+            </div>
+            <div id="game-board-wrap" class="board-canvas-wrap">
+                <canvas id="board-background" class="board-canvas"></canvas>
+                <canvas id="board-cells" class="board-canvas"></canvas>
+                <canvas id="board-highlight" class="board-canvas"></canvas>
+                <canvas id="board-borders" class="board-canvas"></canvas>
+            </div>
+            <div id="piece-buffer" class="piece-buffer">
+                <canvas id="piece0" class="piece-canvas"></canvas>
+                <canvas id="piece1" class="piece-canvas"></canvas>
+                <canvas id="piece2" class="piece-canvas"></canvas>
+            </div>
+            <canvas id="piecedrag" class="piecedrag-canvas"></canvas>
+        </div>
+        <div id="menu-screen" class="hidden">
+            <h1 id="menu-title">Laggdoku</h1>
+            <p id="menu-highscore" class="menu-score-display">
+                <span class="label">High Score</span>
+                <br>
+                <span class="value">UNSET</span>
+            </p>
+            <p id="menu-lastscore" class="menu-score-display">
+                <span class="label">Score</span>
+                <br>
+                <span class="value">UNSET</span>
+            </p>
+            <button id="btn-new-game" class="menu-button" onclick="btn_new_game_click()">New Game</button>
+            <button id="btn-resume-game" class="menu-button" onclick="btn_resume_game_click()">Resume Game</button>
+        </div>
+        <script src="js/postbody.js"></script>
+        <script>init()</script>
+    </body>
+
+</html>

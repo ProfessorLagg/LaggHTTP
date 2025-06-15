@@ -1,8 +1,50 @@
+const builtin = @import("builtin");
 const std = @import("std");
 
-// Although this function looks imperative, note that its job is to
-// declaratively construct a build graph that will be executed by an external
-// runner.
+/// This is low-level implementation details of the build system, not meant to be called by users' build scripts.
+/// Even in the build system itself it is a code smell to call this function.
+fn pathFromInstall(b: *std.Build, sub_path: []const u8) []u8 {
+    return b.pathResolve(&.{ b.install_path, sub_path });
+}
+
+fn copy_dir_to_output(b: *std.Build, src_path: []const u8, dst_path: []const u8) !void {
+    const local_utils = struct {
+        pub fn copyFile(s_dir: std.fs.Dir, s_path: []const u8, d_dir: std.fs.Dir, d_path: []const u8) !void {
+            try s_dir.copyFile(s_path, d_dir, d_path, .{});
+            const d_file: std.fs.File = try d_dir.openFile(d_path, .{ .mode = .write_only });
+            const s_stat: std.fs.Dir.Stat = try s_dir.statFile(s_path);
+            try d_file.updateTimes(s_stat.atime, s_stat.mtime);
+        }
+    };
+
+    const src_abspath = b.pathFromRoot(src_path);
+
+    const install_dir: std.fs.Dir = try std.fs.openDirAbsolute(b.install_path, .{});
+    var src_dir: std.fs.Dir = try std.fs.openDirAbsolute(src_abspath, .{ .iterate = true });
+    var dst_dir: std.fs.Dir = try install_dir.makeOpenPath(dst_path, .{});
+
+    _ = &src_dir;
+    _ = &dst_dir;
+
+    var walker = try src_dir.walk(b.allocator);
+    defer walker.deinit();
+
+    while (try walker.next()) |entry| {
+        switch (entry.kind) {
+            .file => {
+                try local_utils.copyFile(entry.dir, entry.basename, dst_dir, entry.path);
+            },
+            .directory => {
+                dst_dir.makeDir(entry.path) catch |err| switch (err) {
+                    error.PathAlreadyExists => {},
+                    else => return err,
+                };
+            },
+            else => return error.UnexpectedEntryKind,
+        }
+    }
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize: std.builtin.OptimizeMode = b.standardOptimizeOption(.{});
@@ -46,6 +88,8 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(debugger);
 
+    // ===== TestData =====
+    copy_dir_to_output(b, "src/testdata/wwwroot", "bin/wwwroot") catch |err| std.debug.panic("{any}{any}", .{ err, @errorReturnTrace() });
     // ===== RUN =====
     const run_cmd = b.addRunArtifact(debugger);
     run_cmd.step.dependOn(b.getInstallStep());
@@ -58,7 +102,7 @@ pub fn build(b: *std.Build) void {
     // ===== TESTS =====
     const lib_unit_tests = b.addTest(.{
         .root_module = lib_mod,
-       .test_runner = .{ .path = b.path("src/test_runner.zig"), .mode = .simple },
+        .test_runner = .{ .path = b.path("src/test_runner.zig"), .mode = .simple },
     });
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
     const test_step = b.step("test", "Run unit tests");

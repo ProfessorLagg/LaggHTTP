@@ -35,8 +35,6 @@ const URICharacterType = enum {
 
 pub const URIError = error{
     InvalidCharacter,
-    SchemeMissing,
-    PathMissing,
     MalformedAuthority,
     HostMissing,
 };
@@ -44,14 +42,14 @@ pub const URIError = error{
 /// RFC 3986 Uniform Resource Identifier (URI)
 pub const URI = @This();
 
-scheme: []const u8 = undefined,
+scheme: ?[]const u8 = null,
 authority: ?[]const u8 = null,
 userinfo: ?[]const u8 = null,
 host: ?[]const u8 = null,
 port: ?[]const u8 = null,
-path: []const u8 = undefined,
-query: ?[]const u8 = undefined,
-fragment: ?[]const u8 = undefined,
+path: ?[]const u8 = null,
+query: ?[]const u8 = null,
+fragment: ?[]const u8 = null,
 
 /// Helper function to parse the Authority sub-components. Only intended for use inside the parse function
 inline fn parseAuthoritySubComponents(self: *URI) !void {
@@ -71,7 +69,7 @@ inline fn parseAuthoritySubComponents(self: *URI) !void {
     if (self.host.?.len <= 1) return URIError.HostMissing;
 }
 /// Tries to slice `str` into it's component URI parts
-pub fn parse(str: []const u8) URIError!URI {
+fn parse_old(str: []const u8) URIError!URI {
     // TODO Check for minimum URI length
     var S = str[0..];
     var uri: URI = .{};
@@ -138,12 +136,70 @@ pub fn parse(str: []const u8) URIError!URI {
     return uri;
 }
 
-test parse {
-    const uri_strA = "scheme://userinfo@host:1234/path?query#fragment";
-    const uriA: URI = try parse(uri_strA);
-    try std.testing.expectEqualStrings("scheme", uriA.scheme);
-    try std.testing.expectEqualStrings("path", uriA.path);
+/// Tries to slice `str` into it's component URI parts
+pub fn parse(str: []const u8) URIError!URI {
+    for (str) |c| if (URICharacterType.get(c) == .invalid) return URIError.InvalidCharacter;
 
+    // TODO Check for minimum URI length
+    var S = str[0..];
+    var uri: URI = .{};
+
+    // Parsing scheme
+    if (std.mem.indexOfScalar(u8, S, ':')) |scheme_end| {
+        uri.scheme = S[0..scheme_end];
+        S = S[@min(S.len - 1, scheme_end + 1)..];
+
+        //std.log.debug("parsed scheme as \"{s}\". Remainder of S = \"{s}\"", .{ uri.scheme.?, S });
+    }
+    if (S.len == 0) return uri;
+
+    // Parsing Authority
+    if (std.mem.eql(u8, "//", S[0..2])) {
+        S = S[2..];
+        const authority_end: usize = std.mem.indexOfScalar(u8, S, '/') orelse S.len;
+        uri.authority = S[0..authority_end];
+        try uri.parseAuthoritySubComponents();
+        S = S[@min(S.len - 1, authority_end)..];
+
+        //std.log.debug("parsed authority as \"{s}\". Remainder of S = \"{s}\"", .{ uri.authority.?, S });
+    }
+    if (S.len == 0) return uri;
+
+    // Parsing path
+    const path_end: usize = std.mem.indexOfScalar(u8, S, '?') orelse std.mem.indexOfScalar(u8, S, '#') orelse S.len;
+    uri.path = std.mem.trim(u8, S[0..path_end], "/");
+    S = S[@min(S.len - 1, path_end)..];
+
+    //std.log.debug("parsed path as \"{s}\". Remainder of S = \"{s}\"", .{ uri.path.?, S });
+    if (S.len == 0) return uri;
+
+    // Parsing query
+    if (std.mem.indexOfScalar(u8, S, '?')) |query_start| {
+        const query_end = std.mem.indexOfScalar(u8, S, '#') orelse S.len;
+        uri.query = S[query_start..query_end][1..];
+        S = S[@min(S.len - 1, query_end)..];
+        //std.log.debug("parsed query as \"{s}\". Remainder of S = \"{s}\"", .{ uri.query.?, S });
+    }
+    if (S.len == 0) return uri;
+
+    // Parsing fragment
+    if (std.mem.indexOfScalar(u8, S, '#')) |fragment_start| {
+        uri.fragment = S[fragment_start..][1..];
+        S = S[S.len - 1 ..];
+        //std.log.debug("parsed fragment as \"{s}\". Remainder of S = \"{s}\"", .{ uri.fragment.?, S });
+    }
+
+    return uri;
+}
+
+test parse {
+    const uri_strA = "scheme://userinfo@host:1234/path/1/2/3/?query#fragment";
+    const uriA: URI = try parse(uri_strA);
+
+    try std.testing.expect(uriA.scheme != null);
+    try std.testing.expectEqualStrings("scheme", uriA.scheme.?);
+    try std.testing.expect(uriA.path != null);
+    try std.testing.expectEqualStrings("path/1/2/3", uriA.path.?);
     try std.testing.expect(uriA.authority != null);
     try std.testing.expectEqualStrings("userinfo@host:1234", uriA.authority.?);
     try std.testing.expect(uriA.userinfo != null);
@@ -160,8 +216,8 @@ test parse {
 
     const uri_strB = "scheme:path";
     const uriB: URI = try parse(uri_strB);
-    try std.testing.expectEqualStrings("scheme", uriB.scheme);
-    try std.testing.expectEqualStrings("path", uriB.path);
+    try std.testing.expectEqualStrings("scheme", uriB.scheme.?);
+    try std.testing.expectEqualStrings("path", uriB.path.?);
     try std.testing.expectEqual(null, uriB.authority);
     try std.testing.expectEqual(null, uriB.host);
     try std.testing.expectEqual(null, uriB.port);

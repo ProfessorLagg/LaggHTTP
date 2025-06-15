@@ -15,16 +15,22 @@ fn copy_dir_to_output(b: *std.Build, src_path: []const u8, dst_path: []const u8)
             const s_stat: std.fs.Dir.Stat = try s_dir.statFile(s_path);
             try d_file.updateTimes(s_stat.atime, s_stat.mtime);
         }
+
+        pub fn openMakeDirAbsolute(absolute_path: []const u8, flags: std.fs.Dir.OpenOptions) !std.fs.Dir {
+            return std.fs.openDirAbsolute(absolute_path, flags) catch |err| blk: {
+                if (err == error.FileNotFound) {
+                    try std.fs.makeDirAbsolute(absolute_path);
+                    break :blk try std.fs.openDirAbsolute(absolute_path, flags);
+                }
+                break :blk err;
+            };
+        }
     };
 
     const src_abspath = b.pathFromRoot(src_path);
-
-    const install_dir: std.fs.Dir = try std.fs.openDirAbsolute(b.install_path, .{});
     var src_dir: std.fs.Dir = try std.fs.openDirAbsolute(src_abspath, .{ .iterate = true });
+    const install_dir: std.fs.Dir = try local_utils.openMakeDirAbsolute(b.install_path, .{});
     var dst_dir: std.fs.Dir = try install_dir.makeOpenPath(dst_path, .{});
-
-    _ = &src_dir;
-    _ = &dst_dir;
 
     var walker = try src_dir.walk(b.allocator);
     defer walker.deinit();
@@ -88,8 +94,6 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(debugger);
 
-    // ===== TestData =====
-    copy_dir_to_output(b, "src/testdata/wwwroot", "bin/wwwroot") catch |err| std.debug.panic("{any}{any}", .{ err, @errorReturnTrace() });
     // ===== RUN =====
     const run_cmd = b.addRunArtifact(debugger);
     run_cmd.step.dependOn(b.getInstallStep());
@@ -107,4 +111,9 @@ pub fn build(b: *std.Build) void {
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
+
+    // ===== TestData =====
+    if (optimize == .Debug) {
+        copy_dir_to_output(b, "src/testdata/wwwroot", "bin/wwwroot") catch |err| std.debug.panic("{any}{any}", .{ err, @errorReturnTrace() });
+    }
 }

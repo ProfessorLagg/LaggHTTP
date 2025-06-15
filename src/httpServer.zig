@@ -1,9 +1,14 @@
 const builtin = @import("builtin");
 const std = @import("std");
+
 const ThreadPool = std.Thread.Pool;
+
+const log = std.log.scoped(.HttpServer);
+const PerfLog = std.log.scoped(.Perf);
 
 const utils = @import("utils.zig");
 const tcp = @import("tcp.zig");
+
 const httpContextNs = @import("httpContext.zig");
 const HttpContextOptions = httpContextNs.HttpContextOptions;
 const HttpContext = httpContextNs.HttpContext;
@@ -14,20 +19,13 @@ const HttpResponse = httpContextNs.HttpResponse;
 const HttpRequestHandler = httpContextNs.HttpRequestHandler;
 const HttpStatusCode = httpContextNs.HttpStatusCode;
 
-const log = std.log.scoped(.HttpServer);
-const PerfLog = std.log.scoped(.Perf);
+const DynamicArray = @import("dynamicArray.zig").DynamicArray;
 
 pub const HttpServerOptions = struct {
     ctx: HttpContextOptions = .{},
     listenOptions: std.net.Address.ListenOptions = .{
         .reuse_address = true,
         .reuse_port = true,
-    },
-
-    handlers: []const HttpRequestHandler = blk: {
-        var r: []const HttpRequestHandler = undefined;
-        r.len = 0;
-        break :blk r;
     },
 };
 
@@ -75,11 +73,13 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
 
         shouldRun: std.Thread.ResetEvent = .{},
 
+        handlers: DynamicArray(HttpRequestHandler),
         errorHandler: HttpRequestHandler = DefaultErrorHandler.handler(),
 
         pub fn init(allocator: std.mem.Allocator, address: tcp.TCPListener.IpAddress, port: u16) Self {
             return Self{
                 .allocator = allocator,
+                .handlers = DynamicArray(HttpRequestHandler).init(allocator),
                 .address = address,
                 .port = port,
             };
@@ -102,11 +102,24 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
             return total_schedule_time / total_schedule_runs;
         }
 
-        fn handleRequest(self: *const Self, http: *HttpContext) !void {
+        fn handleError(self: *const Self, http: *HttpContext, outer_err: anyerror) bool {
+            // TODO handle client closed
+            log.warn("Server error: {any}{any}", .{ outer_err, @errorReturnTrace()});
+            http.response.statusCode = HttpStatusCode.fromValue(503);
+
+            _ = self.errorHandler.handle(http) catch |inner_err| {
+                log.err("Sending error response failed: {any}{any}", .{ inner_err, @errorReturnTrace()});
+            };
+
+            return true; // this request was handled by the error handler
+        }
+
+        fn handleRequest(self: *const Self, http: *HttpContext) !bool {
             var i: usize = 0;
             var handled: bool = false;
-            while (!handled and i < opt.handlers.len) : (i += 1) {
-                handled = opt.handlers[i](http) catch |outer_err| {
+            const handler_items = self.handlers.constItems();
+            while (!handled and i < handler_items.len) : (i += 1) {
+                handled = self.handlers[i](http) catch |outer_err| {
                     // TODO handle client closed
                     log.warn("Server error: {any}{any}", .{ outer_err, @errorReturnTrace() });
                     http.response.statusCode = HttpStatusCode.fromValue(503);
@@ -136,16 +149,9 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
             };
             var i: usize = 0;
             var handled: bool = false;
-            while (!handled and i < opt.handlers.len) : (i += 1) {
-                handled = opt.handlers[i](&http) catch |outer_err| {
-                    // TODO handle client closed
-                    log.warn("Server error: {any}{any}", .{ outer_err, @errorReturnTrace() });
-                    http.response.statusCode = HttpStatusCode.fromValue(503);
-
-                    _ = self.errorHandler.handle(&http) catch |inner_err| {
-                        log.err("Sending error response failed: {any}{any}", .{ inner_err, @errorReturnTrace() });
-                    };
-                };
+            const handler_items = self.handlers.constItems();
+            while (!handled and i < handler_items.len) : (i += 1) {
+                handled = handler_items[i].handle(&http) catch |err| self.handleError(&http, err);
             }
             if (!handled) {
                 http.response.statusCode = HttpStatusCode.fromValue(404);
@@ -162,7 +168,8 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
             PerfLog.info("HttpServer.handleRequestMultiThread;{d}", .{duration_ns});
         }
 
-        pub fn listen(self: *Self) !void {
+        /// Runs the HTTP Server, blocking the calling thread
+        pub fn run(self: *Self) !void {
             var listener: tcp.TCPListener = try tcp.TCPListener.init(self.address, self.port);
             defer listener.deinit();
 

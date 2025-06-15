@@ -15,15 +15,15 @@ pub const std_options: std.Options = .{
         .{ .scope = .Perf, .level = .info },
         .{ .scope = .tcp, .level = .err },
     },
-    // .logFn = LaggHTTP.logging.log,
-    .logFn = LaggHTTP.logging.noopLog,
+    .logFn = LaggHTTP.logging.log,
+    // .logFn = LaggHTTP.logging.noopLog,
 };
 
 pub fn main() !void {
-    // try LaggHTTP.logging.setup(.{
-    //     .log_stdout = false,
-    //     .log_file = true,
-    // });
+    try LaggHTTP.logging.setup(.{
+        .log_stdout = false,
+        .log_file = true,
+    });
 
     try debugHttpServer();
     // try debugStandardHttpServer();
@@ -217,5 +217,5 @@ fn debugHttpServer() !void {
     var server = LaggHTTP.HttpServer(.{}).init(allocator, address, port);
     defer server.deinit();
 
-    try server.listen();
+    try server.run();
 }

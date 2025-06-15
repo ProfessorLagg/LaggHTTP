@@ -6,6 +6,8 @@ const tcp = @import("tcp.zig");
 const TCPListener = tcp.TCPListener;
 const TCPConnection = tcp.TCPConnection;
 
+const URI = @import("uri.zig").URI;
+
 const httpHeaders = @import("httpHeaders.zig");
 pub const HttpHeader = httpHeaders.HttpHeader;
 const HttpHeaderMap = httpHeaders.HttpHeaderMap;
@@ -83,7 +85,7 @@ pub const HttpRequest = struct {
         .header = undefined,
         .requestLine = undefined,
         .method = undefined,
-        .path = undefined,
+        .target = undefined,
         .version = undefined,
         .rawFields = undefined,
     };
@@ -91,7 +93,9 @@ pub const HttpRequest = struct {
     header: []const u8,
     requestLine: []const u8,
     method: []const u8,
-    path: []const u8,
+    /// Also known as path.
+    /// see [mdn](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Messages#request_targets)
+    target: []const u8,
     version: []const u8,
     rawFields: []const u8,
     body: ?[]const u8 = null,
@@ -111,7 +115,7 @@ pub const HttpRequest = struct {
     fn parse_request_line(self: *HttpRequest) !void {
         var iter = std.mem.splitScalar(u8, self.requestLine, ' ');
         self.method = iter.next() orelse return HttpRequestError.MalformedRequestLine;
-        self.path = iter.next() orelse return HttpRequestError.MalformedRequestLine;
+        self.target = iter.next() orelse return HttpRequestError.MalformedRequestLine;
         self.version = iter.next() orelse return HttpRequestError.MalformedRequestLine;
     }
 
@@ -171,14 +175,14 @@ pub const HttpRequest = struct {
         };
         Log.debug("parsed result.method", .{});
 
-        result.path = result.requestLine[result.method.len..];
-        result.path.len = std.mem.indexOfScalar(u8, result.path, ' ') orelse {
+        result.target = result.requestLine[result.method.len..];
+        result.target.len = std.mem.indexOfScalar(u8, result.target, ' ') orelse {
             Log.err("request line \"{s}\" missing path", .{result.requestLine});
             return HttpRequestError.MalformedRequestLine;
         };
         Log.debug("parsed result.path", .{});
 
-        result.version = result.requestLine[result.path.len..];
+        result.version = result.requestLine[result.target.len..];
         if (result.version.len < VersionMinLen) return {
             Log.err("request line \"{s}\" missing version", .{result.requestLine});
             return HttpRequestError.MalformedRequestLine;
@@ -445,7 +449,7 @@ pub const HttpRequestHandler = struct {
     context: ?*anyopaque,
     handleFn: *const fn (?*anyopaque, *HttpContext) anyerror!bool,
 
-    pub fn handle(self: *const HttpRequestHandler, http: *HttpContext) !bool {
+    pub fn handle(self: *const HttpRequestHandler, http: *HttpContext) anyerror!bool {
         return try self.handleFn(self.context, http);
     }
 };

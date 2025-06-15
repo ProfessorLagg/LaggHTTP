@@ -274,6 +274,18 @@ pub const mem = struct {
     }
 };
 
+pub const heap = struct {
+    pub const static_allocator: std.mem.Allocator = blk: {
+        if (builtin.is_test) break :blk std.testing.allocator;
+        if (builtin.target.cpu.arch.isWasm()) break :blk std.heap.wasm_allocator;
+        if (!builtin.single_threaded) break :blk std.heap.smp_allocator;
+        if (builtin.link_libc) break :blk std.heap.c_allocator;
+
+        // TODO Compiler warning
+        break :blk std.heap.page_allocator;
+    };
+};
+
 pub const meta = struct {
     pub fn printSize(comptime T: type) void {
         const stdout = std.io.getStdOut().writer();
@@ -422,6 +434,38 @@ pub const meta = struct {
         comptime typecheck: fn (comptime type) bool,
     ) bool {
         comptime if (!isTypedVector(T, typecheck)) unreachable;
+    }
+};
+
+pub const fs = struct {
+    pub fn abspath(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
+        if (std.fs.path.isAbsolute(path)) {
+            const new_path = try allocator.alloc(u8, path.len);
+            @memcpy(new_path, path);
+            return new_path;
+        }
+
+        const cwd = std.fs.cwd();
+        const cwd_path = try cwd.realpathAlloc(allocator, ".");
+        defer allocator.free(cwd_path);
+        return try std.fs.path.resolve(allocator, &.{ cwd_path, path });
+    }
+    /// Opens a directory, based on an absolute path.
+    /// Creates the directory if it does not exist.
+    /// The directory is a system resource that remains open until close is called on the result.
+    /// - On Windows, `absolute_path` should be encoded as WTF-8.
+    /// - On WASI, `absolute_path` should be encoded as valid UTF-8.
+    /// - On other platforms, `absolute_path` is an opaque sequence of bytes with no particular encoding.
+    pub fn openMakeDirAbsolute(absolute_path: []const u8, flags: std.fs.Dir.OpenDirOptions) !std.fs.Dir {
+        return std.fs.openDirAbsolute(absolute_path, flags) catch |err| {
+            switch (err) {
+                error.FileNotFound => {
+                    try std.fs.makeDirAbsolute(absolute_path);
+                    return try std.fs.openDirAbsolute(absolute_path, flags);
+                },
+                else => return err,
+            }
+        };
     }
 };
 

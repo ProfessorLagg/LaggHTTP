@@ -2,6 +2,8 @@ const builtin = @import("builtin");
 const std = @import("std");
 const DateTime = @import("dateTime.zig").DateTime;
 
+const utils = @import("utils.zig");
+
 const native_os = builtin.target.os.tag;
 const newline = switch (native_os) {
     .windows => "\r\n",
@@ -26,35 +28,7 @@ var lock_LogFile: std.Thread.Mutex = .{};
 var lock_stdout: std.Thread.Mutex = .{};
 
 // utils
-fn abspath(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
-    if (std.fs.path.isAbsolute(path)) {
-        const new_path = try allocator.alloc(u8, path.len);
-        @memcpy(new_path, path);
-        return new_path;
-    }
 
-    const cwd = std.fs.cwd();
-    const cwd_path = try cwd.realpathAlloc(allocator, ".");
-    defer allocator.free(cwd_path);
-    return try std.fs.path.resolve(allocator, &.{ cwd_path, path });
-}
-/// Opens a directory, based on an absolute path.
-/// Creates the directory if it does not exist.
-/// The directory is a system resource that remains open until close is called on the result.
-/// - On Windows, `absolute_path` should be encoded as WTF-8.
-/// - On WASI, `absolute_path` should be encoded as valid UTF-8.
-/// - On other platforms, `absolute_path` is an opaque sequence of bytes with no particular encoding.
-fn openMakeDirAbsolute(absolute_path: []const u8, flags: std.fs.Dir.OpenDirOptions) !std.fs.Dir {
-    return std.fs.openDirAbsolute(LogDirPath, flags) catch |err| {
-        switch (err) {
-            error.FileNotFound => {
-                try std.fs.makeDirAbsolute(absolute_path);
-                return try std.fs.openDirAbsolute(absolute_path, flags);
-            },
-            else => return err,
-        }
-    };
-}
 fn defaultLogDirPath(allocator: std.mem.Allocator) ![]const u8 {
     const exe_dir = try std.fs.selfExeDirPathAlloc(allocator);
     defer allocator.free(exe_dir);
@@ -135,8 +109,8 @@ pub fn setup(config: LogSettings) !void {
             };
             Settings.log_dir_path = try std.fs.path.join(static_allocator, &path_parts);
         }
-        LogDirPath = try abspath(static_allocator, Settings.log_dir_path.?);
-        LogDir = try openMakeDirAbsolute(LogDirPath, .{ .access_sub_paths = true, .iterate = false, .no_follow = false });
+        LogDirPath = try utils.fs.abspath(static_allocator, Settings.log_dir_path.?);
+        LogDir = try utils.fs.openMakeDirAbsolute(LogDirPath, .{ .access_sub_paths = true, .iterate = false, .no_follow = false });
         _ = try ensureLogFile();
     }
 
@@ -189,7 +163,6 @@ fn logInternal(comptime level: std.log.Level, comptime scope: @Type(.enum_litera
 pub fn log(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), comptime format: []const u8, args: anytype) void {
     logInternal(level, scope, format, args) catch |err| std.debug.panic("could not write log: {any}{any}", .{ err, @errorReturnTrace() });
 }
-
 
 pub fn noopLog(comptime level: std.log.Level, comptime scope: @Type(.enum_literal), comptime format: []const u8, args: anytype) void {
     _ = level;

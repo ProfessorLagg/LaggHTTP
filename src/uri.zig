@@ -154,7 +154,7 @@ pub fn parse(str: []const u8) URIError!URI {
     if (S.len == 0) return uri;
 
     // Parsing Authority
-    if (std.mem.eql(u8, "//", S[0..2])) {
+    if (S.len >= 2 and std.mem.eql(u8, "//", S[0..2])) {
         S = S[2..];
         const authority_end: usize = std.mem.indexOfScalar(u8, S, '/') orelse S.len;
         uri.authority = S[0..authority_end];
@@ -193,8 +193,8 @@ pub fn parse(str: []const u8) URIError!URI {
 }
 
 test parse {
-    const uri_strA = "scheme://userinfo@host:1234/path/1/2/3/?query#fragment";
-    const uriA: URI = try parse(uri_strA);
+    const strA = "scheme://userinfo@host:1234/path/1/2/3/?query#fragment";
+    const uriA: URI = try parse(strA);
 
     try std.testing.expect(uriA.scheme != null);
     try std.testing.expectEqualStrings("scheme", uriA.scheme.?);
@@ -214,8 +214,8 @@ test parse {
     try std.testing.expect(uriA.fragment != null);
     try std.testing.expectEqualStrings("fragment", uriA.fragment.?);
 
-    const uri_strB = "scheme:path";
-    const uriB: URI = try parse(uri_strB);
+    const strB = "scheme:path";
+    const uriB: URI = try parse(strB);
     try std.testing.expectEqualStrings("scheme", uriB.scheme.?);
     try std.testing.expectEqualStrings("path", uriB.path.?);
     try std.testing.expectEqual(null, uriB.authority);
@@ -223,4 +223,24 @@ test parse {
     try std.testing.expectEqual(null, uriB.port);
     try std.testing.expectEqual(null, uriB.query);
     try std.testing.expectEqual(null, uriB.fragment);
+
+    const strC = "/";
+    const uriC = try parse(strC);
+    try std.testing.expectEqual(null, uriC.scheme);
+    try std.testing.expectEqualStrings("", uriC.path.?);
+    try std.testing.expectEqual(null, uriC.authority);
+    try std.testing.expectEqual(null, uriC.host);
+    try std.testing.expectEqual(null, uriC.port);
+    try std.testing.expectEqual(null, uriC.query);
+    try std.testing.expectEqual(null, uriC.fragment);
+
+    const strD = "/index.html";
+    const uriD = try parse(strD);
+    try std.testing.expectEqual(null, uriD.scheme);
+    try std.testing.expectEqualStrings("index.html", uriD.path.?);
+    try std.testing.expectEqual(null, uriD.authority);
+    try std.testing.expectEqual(null, uriD.host);
+    try std.testing.expectEqual(null, uriD.port);
+    try std.testing.expectEqual(null, uriD.query);
+    try std.testing.expectEqual(null, uriD.fragment);
 }

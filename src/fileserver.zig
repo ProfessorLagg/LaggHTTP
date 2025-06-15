@@ -45,8 +45,6 @@ pub const HTTPFileHandler = struct {
         const self: *HTTPFileHandler = @ptrFromInt(selfptr.?);
         const uri: URI = try URI.parse(ctx.request.target);
         const file_path: []const u8 = uri.path orelse "";
-        std.debug.print("ctx.request.target: \"{s}\" | file_path: \"{s}\"\n", .{ ctx.request.target, file_path });
-        std.debug.print("uri: \"{any}\"\n", .{uri});
         const file: std.fs.File = self.root.openFile(file_path, .{}) catch |err| {
             switch (err) {
                 // TODO the server is overriding this

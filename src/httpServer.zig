@@ -188,8 +188,9 @@ pub fn HttpServer(comptime opt: HttpServerOptions) type {
                 waitGroup.finish();
                 threadPool.deinit();
             }
-
-            log.info("HttpServer listening on address {any}", .{self.address});
+            const stdout = std.io.getStdOut().writer();
+            // TODO format IP correctly
+            try std.fmt.format(stdout, "HttpServer listening on address {any}", .{self.address});
             self.shouldRun.set();
             while (self.shouldRun.isSet()) {
                 const connection = listener.accept() catch |err| {
